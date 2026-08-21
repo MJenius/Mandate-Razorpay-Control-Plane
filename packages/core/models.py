@@ -1,4 +1,4 @@
-"""SQLAlchemy ORM models representing the persistent domain layer and event-driven reliability."""
+"""SQLAlchemy ORM models representing the persistent domain layer, event-driven reliability, and hierarchical delegation trees."""
 
 import uuid
 from datetime import datetime, timezone
@@ -56,7 +56,7 @@ class Principal(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
     agents: Mapped[List["Agent"]] = relationship("Agent", back_populates="owner")
-    mandates_granted: Mapped[List["Mandate"]] = relationship("Mandate", back_populates="granted_by_principal")
+    mandates_granted: Mapped[List["Mandate"]] = relationship("Mandate", back_populates="granted_by_principal", foreign_keys="Mandate.granted_by_id")
 
 
 class Agent(Base):
@@ -68,23 +68,30 @@ class Agent(Base):
     owner_id: Mapped[str] = mapped_column(String(36), ForeignKey("principals.id"), nullable=False, index=True)
     status: Mapped[AgentStatus] = mapped_column(SQLEnum(AgentStatus, native_enum=False), default=AgentStatus.ACTIVE, nullable=False)
     api_key_hash: Mapped[str] = mapped_column(String(256), nullable=False, unique=True, index=True)
-    agent_type: Mapped[str] = mapped_column(String(32), default="SHOPPING", nullable=False)
+    agent_type: Mapped[str] = mapped_column(String(32), default="SHOPPING", nullable=False) # e.g. "SHOPPING", "SUPPORT", "PROCUREMENT", "RISK", "FINANCE"
     metadata_json: Mapped[Dict[str, Any]] = mapped_column(JSON_TYPE, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
     owner: Mapped["Principal"] = relationship("Principal", back_populates="agents")
-    mandates: Mapped[List["Mandate"]] = relationship("Mandate", back_populates="agent")
+    mandates: Mapped[List["Mandate"]] = relationship("Mandate", back_populates="agent", foreign_keys="Mandate.agent_id")
     operations: Mapped[List["FinancialOperation"]] = relationship("FinancialOperation", back_populates="agent")
     traces: Mapped[List["AgentExecutionTrace"]] = relationship("AgentExecutionTrace", back_populates="agent")
 
 
 class Mandate(Base):
+    """Hierarchical Financial Mandate model forming single-parent delegation trees."""
     __tablename__ = "mandates"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
     agent_id: Mapped[str] = mapped_column(String(36), ForeignKey("agents.id"), nullable=False, index=True)
     granted_by_id: Mapped[str] = mapped_column(String(36), ForeignKey("principals.id"), nullable=False)
+    
+    # Hierarchical Tree Relationship (Single-Parent)
+    parent_mandate_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("mandates.id"), nullable=True, index=True)
+    delegation_depth: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    max_delegation_depth: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
+    
     status: Mapped[MandateStatus] = mapped_column(SQLEnum(MandateStatus, native_enum=False), default=MandateStatus.ACTIVE, nullable=False)
     
     # Financial Boundaries (in smallest currency unit, e.g. paise for INR)
@@ -92,9 +99,10 @@ class Mandate(Base):
     max_amount_per_op: Mapped[int] = mapped_column(BigInteger, nullable=False)
     aggregate_spend_limit: Mapped[int] = mapped_column(BigInteger, nullable=False)
     
-    # Two-phase budget accounting
+    # Two-phase budget accounting & sibling delegation reservation
     current_aggregate_spend: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     reserved_spend: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    delegated_child_budget_allocated: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     
     # Policy rule triggers
     review_threshold_amount: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
@@ -108,9 +116,13 @@ class Mandate(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
-    agent: Mapped["Agent"] = relationship("Agent", back_populates="mandates")
-    granted_by_principal: Mapped["Principal"] = relationship("Principal", back_populates="mandates_granted")
+    agent: Mapped["Agent"] = relationship("Agent", back_populates="mandates", foreign_keys=[agent_id])
+    granted_by_principal: Mapped["Principal"] = relationship("Principal", back_populates="mandates_granted", foreign_keys=[granted_by_id])
     operations: Mapped[List["FinancialOperation"]] = relationship("FinancialOperation", back_populates="mandate")
+    
+    # Self-referential tree relationship
+    parent_mandate: Mapped[Optional["Mandate"]] = relationship("Mandate", remote_side=[id], back_populates="child_mandates", foreign_keys=[parent_mandate_id])
+    child_mandates: Mapped[List["Mandate"]] = relationship("Mandate", back_populates="parent_mandate")
 
 
 class FinancialOperation(Base):
@@ -171,7 +183,6 @@ class Transaction(Base):
 
 
 class DomainOutboxEvent(Base):
-    """Transactional Outbox for reliable asynchronous event delivery."""
     __tablename__ = "domain_outbox_events"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
@@ -180,7 +191,7 @@ class DomainOutboxEvent(Base):
     event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     payload: Mapped[Dict[str, Any]] = mapped_column(JSON_TYPE, default=dict, nullable=False)
     
-    status: Mapped[str] = mapped_column(String(32), default="PENDING", nullable=False, index=True) # PENDING, PUBLISHED, FAILED
+    status: Mapped[str] = mapped_column(String(32), default="PENDING", nullable=False, index=True)
     retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     
@@ -189,7 +200,6 @@ class DomainOutboxEvent(Base):
 
 
 class WebhookEvent(Base):
-    """Durable webhook ingestion model with Dead-Letter Queue (DLQ) support."""
     __tablename__ = "webhook_events"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
@@ -200,7 +210,6 @@ class WebhookEvent(Base):
     raw_payload: Mapped[Dict[str, Any]] = mapped_column(JSON_TYPE, default=dict, nullable=False)
     signature_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     
-    # State & DLQ Pipeline: RECEIVED -> PROCESSING -> PROCESSED | FAILED -> DEAD_LETTER
     status: Mapped[str] = mapped_column(String(32), default="RECEIVED", nullable=False, index=True)
     processed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
     processing_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -213,7 +222,6 @@ class WebhookEvent(Base):
 
 
 class ReconciliationReport(Base):
-    """Stores automated read-only gateway reconciliation audit reports."""
     __tablename__ = "reconciliation_reports"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)

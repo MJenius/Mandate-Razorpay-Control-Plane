@@ -1,16 +1,17 @@
-"""Deterministic Policy Engine with structured ALLOW/DENY/REQUIRE_HUMAN_REVIEW evaluations."""
+"""Deterministic Policy Engine with hierarchical delegation validation and structured ALLOW/DENY/REQUIRE_HUMAN_REVIEW evaluations."""
 
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from packages.core.enums import AgentStatus, MandateStatus, PolicyDecisionType
 from packages.core.models import Agent, FinancialOperation, Mandate
 
 
 def ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:
-    """Ensures datetime is timezone-aware in UTC for safe comparisons."""
     if dt is None:
         return None
     if dt.tzinfo is None:
@@ -19,7 +20,6 @@ def ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:
 
 
 class PolicyRuleDiagnostic(BaseModel):
-    """Evaluation result for an individual policy rule."""
     model_config = ConfigDict(from_attributes=True)
 
     rule_name: str
@@ -31,7 +31,6 @@ class PolicyRuleDiagnostic(BaseModel):
 
 
 class PolicyEvaluationResult(BaseModel):
-    """Comprehensive policy engine evaluation decision output."""
     model_config = ConfigDict(from_attributes=True)
 
     decision: PolicyDecisionType
@@ -48,8 +47,6 @@ class PolicyEvaluationResult(BaseModel):
 
 
 class PolicyRule(ABC):
-    """Abstract base class for all deterministic mandate policy rules."""
-
     @property
     @abstractmethod
     def name(self) -> str:
@@ -67,8 +64,6 @@ class PolicyRule(ABC):
 
 
 class AgentStatusRule(PolicyRule):
-    """Verifies that the calling AI Agent identity is ACTIVE."""
-
     @property
     def name(self) -> str:
         return "AGENT_STATUS_CHECK"
@@ -100,8 +95,6 @@ class AgentStatusRule(PolicyRule):
 
 
 class MandateLifecycleRule(PolicyRule):
-    """Verifies that the mandate is ACTIVE and within its valid time-window."""
-
     @property
     def name(self) -> str:
         return "MANDATE_LIFECYCLE_CHECK"
@@ -156,9 +149,69 @@ class MandateLifecycleRule(PolicyRule):
         )
 
 
-class CurrencyMatchRule(PolicyRule):
-    """Verifies that the requested financial currency matches the mandate constraint."""
+class HierarchicalDelegationRule(PolicyRule):
+    """Verifies that all ancestor parent mandates in the tree remain ACTIVE and valid."""
 
+    @property
+    def name(self) -> str:
+        return "HIERARCHICAL_DELEGATION_CHECK"
+
+    async def evaluate(
+        self,
+        agent: Agent,
+        mandate: Mandate,
+        operation: FinancialOperation,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> PolicyRuleDiagnostic:
+        start = time.perf_counter()
+        
+        # If this is a root mandate (no parent), pass immediately
+        if not mandate.parent_mandate_id:
+            return PolicyRuleDiagnostic(
+                rule_name=self.name,
+                decision=PolicyDecisionType.ALLOW,
+                passed=True,
+                reason="Root mandate has no parent dependencies",
+                latency_ms=round((time.perf_counter() - start) * 1000, 3),
+            )
+
+        # Context session check if available
+        db_session: Optional[AsyncSession] = context.get("db") if context else None
+        if db_session:
+            curr_parent_id = mandate.parent_mandate_id
+            while curr_parent_id:
+                parent = await db_session.get(Mandate, curr_parent_id)
+                if not parent:
+                    return PolicyRuleDiagnostic(
+                        rule_name=self.name,
+                        decision=PolicyDecisionType.DENY,
+                        passed=False,
+                        reason=f"Ancestor parent mandate '{curr_parent_id}' not found",
+                        latency_ms=round((time.perf_counter() - start) * 1000, 3),
+                    )
+
+                if parent.status != MandateStatus.ACTIVE:
+                    return PolicyRuleDiagnostic(
+                        rule_name=self.name,
+                        decision=PolicyDecisionType.DENY,
+                        passed=False,
+                        reason=f"Parent mandate '{parent.id}' in delegation tree is {parent.status.value}; authority invalidated",
+                        latency_ms=round((time.perf_counter() - start) * 1000, 3),
+                        context={"parent_id": parent.id, "parent_status": parent.status.value},
+                    )
+
+                curr_parent_id = parent.parent_mandate_id
+
+        return PolicyRuleDiagnostic(
+            rule_name=self.name,
+            decision=PolicyDecisionType.ALLOW,
+            passed=True,
+            reason="Delegation hierarchy validated and active",
+            latency_ms=round((time.perf_counter() - start) * 1000, 3),
+        )
+
+
+class CurrencyMatchRule(PolicyRule):
     @property
     def name(self) -> str:
         return "CURRENCY_MATCH_CHECK"
@@ -190,8 +243,6 @@ class CurrencyMatchRule(PolicyRule):
 
 
 class AllowedOperationTypeRule(PolicyRule):
-    """Verifies that the requested operation type is explicitly whitelisted."""
-
     @property
     def name(self) -> str:
         return "OPERATION_TYPE_CHECK"
@@ -224,8 +275,6 @@ class AllowedOperationTypeRule(PolicyRule):
 
 
 class PerTransactionLimitRule(PolicyRule):
-    """Enforces single-operation maximum amount bounds."""
-
     @property
     def name(self) -> str:
         return "PER_TRANSACTION_LIMIT_CHECK"
@@ -257,8 +306,6 @@ class PerTransactionLimitRule(PolicyRule):
 
 
 class AggregateSpendLimitRule(PolicyRule):
-    """Enforces aggregate spending limits including committed and active reservations."""
-
     @property
     def name(self) -> str:
         return "AGGREGATE_SPEND_LIMIT_CHECK"
@@ -299,8 +346,6 @@ class AggregateSpendLimitRule(PolicyRule):
 
 
 class HumanReviewThresholdRule(PolicyRule):
-    """Triggers REQUIRE_HUMAN_REVIEW when operation exceeds sensitive approval threshold."""
-
     @property
     def name(self) -> str:
         return "HUMAN_REVIEW_THRESHOLD_CHECK"
@@ -343,12 +388,11 @@ class HumanReviewThresholdRule(PolicyRule):
 
 
 class PolicyEngine:
-    """Deterministic policy pipeline orchestrating all mandate verification rules."""
-
     def __init__(self, rules: Optional[List[PolicyRule]] = None) -> None:
         self.rules: List[PolicyRule] = rules or [
             AgentStatusRule(),
             MandateLifecycleRule(),
+            HierarchicalDelegationRule(),
             CurrencyMatchRule(),
             AllowedOperationTypeRule(),
             PerTransactionLimitRule(),
