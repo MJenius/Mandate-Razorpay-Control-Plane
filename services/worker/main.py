@@ -115,3 +115,36 @@ async def reconcile_stuck_reservations(
         await db.commit()
 
     return reconciled_count
+
+
+async def run_worker_loop(interval_seconds: int = 30) -> None:
+    """Continuous background worker loop running periodic reconciliation."""
+    logger.info("background_worker_started", interval=interval_seconds)
+    
+    # Ensure tables exist in Postgres if worker starts before API sync
+    from packages.core.models import Base
+    from packages.shared.database import get_engine
+    try:
+        engine = get_engine()
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("worker_database_schema_synced")
+    except Exception as exc:
+        logger.warning("worker_schema_sync_deferred", reason=str(exc))
+
+    while True:
+        try:
+            reconciled = await reconcile_stuck_reservations()
+            if reconciled > 0:
+                logger.info("reconciliation_cycle_completed", reconciled_count=reconciled)
+        except Exception as e:
+            logger.error("worker_loop_error", error=str(e))
+        await asyncio.sleep(interval_seconds)
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(run_worker_loop())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("background_worker_stopped")
+

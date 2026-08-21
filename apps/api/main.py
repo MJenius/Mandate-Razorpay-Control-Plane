@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from apps.api.routes.agent_chat import router as agent_chat_router
 from apps.api.routes.agents import router as agents_router
 from apps.api.routes.audit import router as audit_router
+from apps.api.routes.demo import router as demo_router
 from apps.api.routes.evaluation import router as evaluation_router
 from apps.api.routes.health import router as health_router
 from apps.api.routes.mandates import router as mandates_router
@@ -88,6 +89,7 @@ def create_app() -> FastAPI:
     app.include_router(telemetry_router, prefix="/api/v1")
     app.include_router(evaluation_router, prefix="/api/v1")
     app.include_router(mcp_gateway_router, prefix="/api/v1")
+    app.include_router(demo_router, prefix="/api/v1")
 
     return app
 

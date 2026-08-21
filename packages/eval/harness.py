@@ -1,9 +1,6 @@
-"""Adversarial Benchmark Evaluation Harness running realistic scenarios against Mandate and Baselines."""
-
 import random
 import time
 from typing import Any, Dict, List, Optional
-import numpy as np
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from packages.agents.adapter import MockLLMAdapter
@@ -158,10 +155,23 @@ class EvaluationHarness:
         acceptance_rate = (legitimate_accepted / legitimate_count) if legitimate_count > 0 else 1.0
         fpr = (legitimate_rejected / legitimate_count) if legitimate_count > 0 else 0.0
 
-        p50 = float(np.percentile(latencies, 50)) if latencies else 0.0
-        p95 = float(np.percentile(latencies, 95)) if latencies else 0.0
-        p99 = float(np.percentile(latencies, 99)) if latencies else 0.0
-        avg_lat = float(np.mean(latencies)) if latencies else 0.0
+        def _calc_percentile(data: List[float], p: float) -> float:
+            if not data:
+                return 0.0
+            sorted_data = sorted(data)
+            k = (len(sorted_data) - 1) * (p / 100.0)
+            f = int(k)
+            c = int(k) + 1
+            if c >= len(sorted_data):
+                return float(sorted_data[-1])
+            d0 = sorted_data[f] * (c - k)
+            d1 = sorted_data[c] * (k - f)
+            return float(d0 + d1)
+
+        p50 = _calc_percentile(latencies, 50)
+        p95 = _calc_percentile(latencies, 95)
+        p99 = _calc_percentile(latencies, 99)
+        avg_lat = float(sum(latencies) / len(latencies)) if latencies else 0.0
 
         # Baseline Comparative Data
         baseline_data = {
