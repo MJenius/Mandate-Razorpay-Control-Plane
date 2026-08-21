@@ -2,14 +2,15 @@
 
 from datetime import datetime, timedelta, timezone
 import pytest
-from packages.core.enums import MandateStatus, OperationType
-from packages.core.models import FinancialOperation, Mandate
+from packages.core.enums import AgentStatus, MandateStatus, OperationType
+from packages.core.models import Agent, FinancialOperation, Mandate
 from packages.policy.engine import PolicyEngine
 
 
 @pytest.mark.asyncio
 async def test_policy_engine_approval_under_budget() -> None:
     engine = PolicyEngine()
+    agent = Agent(id="ag_1", name="Bot 1", owner_id="usr_1", status=AgentStatus.ACTIVE, api_key_hash="hash_1")
     mandate = Mandate(
         id="mand_1",
         agent_id="ag_1",
@@ -19,6 +20,7 @@ async def test_policy_engine_approval_under_budget() -> None:
         max_amount_per_op=50000,
         aggregate_spend_limit=200000,
         current_aggregate_spend=10000,
+        reserved_spend=0,
         allowed_operations=["CREATE_ORDER", "CAPTURE_PAYMENT"],
         valid_until=datetime.now(timezone.utc) + timedelta(days=30),
     )
@@ -32,7 +34,7 @@ async def test_policy_engine_approval_under_budget() -> None:
         currency="INR",
     )
 
-    result = await engine.evaluate_operation(mandate, operation)
+    result = await engine.evaluate(agent, mandate, operation)
     assert result.approved is True
     assert len(result.rejection_reasons) == 0
 
@@ -40,6 +42,7 @@ async def test_policy_engine_approval_under_budget() -> None:
 @pytest.mark.asyncio
 async def test_policy_engine_rejection_over_per_op_limit() -> None:
     engine = PolicyEngine()
+    agent = Agent(id="ag_1", name="Bot 1", owner_id="usr_1", status=AgentStatus.ACTIVE, api_key_hash="hash_1")
     mandate = Mandate(
         id="mand_1",
         agent_id="ag_1",
@@ -49,6 +52,7 @@ async def test_policy_engine_rejection_over_per_op_limit() -> None:
         max_amount_per_op=5000,
         aggregate_spend_limit=50000,
         current_aggregate_spend=0,
+        reserved_spend=0,
         allowed_operations=["CREATE_ORDER"],
         valid_until=datetime.now(timezone.utc) + timedelta(days=30),
     )
@@ -62,14 +66,15 @@ async def test_policy_engine_rejection_over_per_op_limit() -> None:
         currency="INR",
     )
 
-    result = await engine.evaluate_operation(mandate, operation)
+    result = await engine.evaluate(agent, mandate, operation)
     assert result.approved is False
-    assert any("exceeds max per-operation limit" in r for r in result.rejection_reasons)
+    assert any("exceeds per-transaction limit" in r for r in result.rejection_reasons)
 
 
 @pytest.mark.asyncio
 async def test_policy_engine_rejection_unauthorized_op() -> None:
     engine = PolicyEngine()
+    agent = Agent(id="ag_1", name="Bot 1", owner_id="usr_1", status=AgentStatus.ACTIVE, api_key_hash="hash_1")
     mandate = Mandate(
         id="mand_1",
         agent_id="ag_1",
@@ -79,6 +84,7 @@ async def test_policy_engine_rejection_unauthorized_op() -> None:
         max_amount_per_op=50000,
         aggregate_spend_limit=500000,
         current_aggregate_spend=0,
+        reserved_spend=0,
         allowed_operations=["CREATE_ORDER"],  # CREATE_REFUND not allowed
         valid_until=datetime.now(timezone.utc) + timedelta(days=30),
     )
@@ -92,6 +98,6 @@ async def test_policy_engine_rejection_unauthorized_op() -> None:
         currency="INR",
     )
 
-    result = await engine.evaluate_operation(mandate, operation)
+    result = await engine.evaluate(agent, mandate, operation)
     assert result.approved is False
     assert any("not authorized" in r for r in result.rejection_reasons)

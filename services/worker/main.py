@@ -1,66 +1,117 @@
-"""Asynchronous background worker service for async operation execution."""
+"""Asynchronous background worker service with automated reconciliation for orphan budget reservations."""
 
 import asyncio
 import signal
-from typing import Any
+import uuid
+from datetime import datetime, timedelta, timezone
+from typing import Any, List, Optional
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
+from packages.core.enums import AuditAction, OperationStatus, TransactionStatus
+from packages.core.models import AuditEvent, FinancialOperation, Mandate, Transaction
 from packages.events.bus import BaseEvent, InMemoryEventBus
+from packages.razorpay.client import RazorpayClient
 from packages.shared.config import get_settings
+from packages.shared.database import get_session_factory
 from packages.shared.logging import get_logger, setup_logging
 
 setup_logging()
 logger = get_logger("services.worker")
 
 event_bus = InMemoryEventBus()
+razorpay_client = RazorpayClient()
 
 
-async def process_financial_operation_event(event: BaseEvent) -> None:
-    """Handles async execution of policy-approved financial operations."""
-    logger.info("worker_received_event", event_id=event.event_id, source=event.source_service)
-    # Stub: Phase 1 will invoke Razorpay client to dispatch orders/transfers
+async def reconcile_stuck_reservations(
+    timeout_seconds: int = 120,
+    session_factory: Optional[async_sessionmaker[AsyncSession]] = None,
+) -> int:
+    """
+    Reconciliation Engine:
+    Detects operations that remained in RESERVED or EXECUTING state beyond `timeout_seconds`
+    (e.g., due to process crashes, network partitions, or unhandled server restarts)
+    and verifies their actual state with Razorpay before releasing or committing reserved_spend.
+    """
+    session_maker = session_factory or get_session_factory()
+    cutoff_time = datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
+    reconciled_count = 0
 
+    async with session_maker() as db:
+        stmt = select(FinancialOperation).where(
+            FinancialOperation.status.in_([OperationStatus.RESERVED, OperationStatus.EXECUTING]),
+            FinancialOperation.created_at <= cutoff_time,
+        )
+        res = await db.execute(stmt)
+        stuck_ops = res.scalars().all()
 
-class MandateWorker:
-    """Async worker loop handling queue events and background reconciliations."""
+        for op in stuck_ops:
+            logger.warning("stuck_operation_detected", op_id=op.operation_id, status=op.status.value)
+            mandate = await db.get(Mandate, op.mandate_id)
+            if not mandate:
+                continue
 
-    def __init__(self) -> None:
-        self.running = False
-        self.settings = get_settings()
+            tx_stmt = select(Transaction).where(Transaction.operation_id == op.id)
+            tx_res = await db.execute(tx_stmt)
+            tx = tx_res.scalar_one_or_none()
 
-    async def start(self) -> None:
-        self.running = True
-        logger.info("mandate_worker_started", concurrency=4)
-        event_bus.subscribe("financial_operations", process_financial_operation_event)
+            # Case 1: Crashed before any gateway call was dispatched
+            if not tx or (not tx.gateway_order_id and not tx.gateway_payment_id and not tx.gateway_payment_link_id):
+                logger.info("releasing_crashed_unexecuted_reservation", op_id=op.operation_id, amount=op.amount)
+                op.status = OperationStatus.FAILED
+                op.error_message = "Reservation expired / process crashed before gateway dispatch"
 
-        while self.running:
-            try:
-                # Worker heartbeat / polling loop
-                await asyncio.sleep(5)
-                logger.debug("worker_heartbeat_tick")
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error("worker_loop_error", error=str(e))
-                await asyncio.sleep(1)
+                await db.execute(
+                    update(Mandate)
+                    .where(Mandate.id == mandate.id)
+                    .values(
+                        reserved_spend=Mandate.reserved_spend - op.amount,
+                        version=Mandate.version + 1,
+                    )
+                )
 
-        logger.info("mandate_worker_stopped")
+                audit = AuditEvent(
+                    event_id=f"aud_{uuid.uuid4().hex[:16]}",
+                    action=AuditAction.BUDGET_RELEASED,
+                    actor_id="RECONCILIATION_WORKER",
+                    actor_type="SYSTEM",
+                    resource_id=mandate.id,
+                    resource_type="MANDATE",
+                    payload={"released_amount": op.amount, "reason": op.error_message},
+                )
+                db.add(audit)
+                reconciled_count += 1
 
-    def stop(self) -> None:
-        self.running = False
+            # Case 2: Gateway order was created, check Razorpay status
+            elif tx.gateway_order_id:
+                try:
+                    order_status = await razorpay_client.fetch_order(tx.gateway_order_id)
+                    if order_status.status == "paid":
+                        logger.info("committing_reconciled_paid_order", op_id=op.operation_id, order_id=tx.gateway_order_id)
+                        op.status = OperationStatus.SUCCEEDED
+                        tx.status = TransactionStatus.CAPTURED
+                        await db.execute(
+                            update(Mandate)
+                            .where(Mandate.id == mandate.id)
+                            .values(
+                                reserved_spend=Mandate.reserved_spend - op.amount,
+                                current_aggregate_spend=Mandate.current_aggregate_spend + op.amount,
+                                version=Mandate.version + 1,
+                            )
+                        )
+                        audit = AuditEvent(
+                            event_id=f"aud_{uuid.uuid4().hex[:16]}",
+                            action=AuditAction.BUDGET_COMMITTED,
+                            actor_id="RECONCILIATION_WORKER",
+                            actor_type="SYSTEM",
+                            resource_id=mandate.id,
+                            resource_type="MANDATE",
+                            payload={"committed_amount": op.amount, "order_id": tx.gateway_order_id},
+                        )
+                        db.add(audit)
+                        reconciled_count += 1
+                except Exception as ex:
+                    logger.error("reconciliation_fetch_failed", order_id=tx.gateway_order_id, error=str(ex))
 
+        await db.commit()
 
-async def main() -> None:
-    worker = MandateWorker()
-    
-    # Graceful shutdown handler
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        try:
-            loop.add_signal_handler(sig, worker.stop)
-        except NotImplementedError:
-            pass  # Windows event loop fallback
-
-    await worker.start()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    return reconciled_count

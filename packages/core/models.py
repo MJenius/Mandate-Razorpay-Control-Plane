@@ -1,4 +1,4 @@
-"""SQLAlchemy ORM models representing the persistent domain layer."""
+"""SQLAlchemy ORM models representing the persistent domain layer with two-phase budget reservation."""
 
 import uuid
 from datetime import datetime, timezone
@@ -89,11 +89,18 @@ class Mandate(Base):
     currency: Mapped[str] = mapped_column(String(3), default="INR", nullable=False)
     max_amount_per_op: Mapped[int] = mapped_column(BigInteger, nullable=False)
     aggregate_spend_limit: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    current_aggregate_spend: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     
+    # Two-phase budget accounting
+    current_aggregate_spend: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False) # Settled/committed spend
+    reserved_spend: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)          # Pending execution reservations
+    
+    # Policy rule triggers
+    review_threshold_amount: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True) # Amounts above this require human approval
     allowed_operations: Mapped[List[str]] = mapped_column(JSON_TYPE, default=list, nullable=False)
     policy_config: Mapped[Dict[str, Any]] = mapped_column(JSON_TYPE, default=dict, nullable=False)
+    suspension_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False) # Optimistic locking counter
     valid_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     valid_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
@@ -102,6 +109,14 @@ class Mandate(Base):
     agent: Mapped["Agent"] = relationship("Agent", back_populates="mandates")
     granted_by_principal: Mapped["Principal"] = relationship("Principal", back_populates="mandates_granted")
     operations: Mapped[List["FinancialOperation"]] = relationship("FinancialOperation", back_populates="mandate")
+
+    @property
+    def total_committed_and_reserved(self) -> int:
+        return self.current_aggregate_spend + self.reserved_spend
+
+    @property
+    def remaining_budget(self) -> int:
+        return max(0, self.aggregate_spend_limit - self.total_committed_and_reserved)
 
 
 class FinancialOperation(Base):
@@ -123,6 +138,7 @@ class FinancialOperation(Base):
     payload: Mapped[Dict[str, Any]] = mapped_column(JSON_TYPE, default=dict, nullable=False)
     policy_evaluation_details: Mapped[Dict[str, Any]] = mapped_column(JSON_TYPE, default=dict, nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    approved_by_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
@@ -160,7 +176,6 @@ class Transaction(Base):
 
 
 class WebhookEvent(Base):
-    """Tracks received external webhooks for deduplication and retry resilience."""
     __tablename__ = "webhook_events"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)

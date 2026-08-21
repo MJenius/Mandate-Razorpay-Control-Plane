@@ -9,6 +9,7 @@ from packages.core.enums import (
     MandateStatus,
     OperationStatus,
     OperationType,
+    PolicyDecisionType,
     PrincipalRole,
     TransactionStatus,
 )
@@ -43,6 +44,11 @@ class AgentCreate(BaseSchema):
     metadata_json: Dict[str, Any] = Field(default_factory=dict)
 
 
+class AgentStatusUpdate(BaseSchema):
+    status: AgentStatus
+    reason: Optional[str] = None
+
+
 class AgentResponse(BaseSchema):
     id: str
     name: str
@@ -61,9 +67,16 @@ class MandateCreate(BaseSchema):
     currency: str = Field(default="INR", min_length=3, max_length=3)
     max_amount_per_op: int = Field(..., gt=0, description="In smallest currency unit (paise/cents)")
     aggregate_spend_limit: int = Field(..., gt=0, description="Total budget in smallest currency unit")
+    review_threshold_amount: Optional[int] = Field(None, gt=0, description="Amounts at or above this require human approval")
     allowed_operations: List[OperationType] = Field(default_factory=list)
     policy_config: Dict[str, Any] = Field(default_factory=dict)
+    valid_from: Optional[datetime] = None
     valid_until: datetime
+
+
+class MandateStatusUpdate(BaseSchema):
+    action: str = Field(..., description="SUSPEND, REVOKE, or ACTIVATE")
+    reason: Optional[str] = None
 
 
 class MandateResponse(BaseSchema):
@@ -75,8 +88,12 @@ class MandateResponse(BaseSchema):
     max_amount_per_op: int
     aggregate_spend_limit: int
     current_aggregate_spend: int
+    reserved_spend: int
+    review_threshold_amount: Optional[int] = None
     allowed_operations: List[str]
     policy_config: Dict[str, Any]
+    suspension_reason: Optional[str] = None
+    version: int
     valid_from: datetime
     valid_until: datetime
     created_at: datetime
@@ -92,6 +109,12 @@ class OperationCreate(BaseSchema):
     amount: int = Field(..., gt=0)
     currency: str = Field(default="INR", min_length=3, max_length=3)
     payload: Dict[str, Any] = Field(default_factory=dict)
+
+
+class HumanApprovalRequest(BaseSchema):
+    approved_by_id: str
+    approved: bool
+    reason: Optional[str] = None
 
 
 class PaymentVerifyRequest(BaseSchema):
@@ -122,6 +145,7 @@ class OperationResponse(BaseSchema):
     payload: Dict[str, Any]
     policy_evaluation_details: Dict[str, Any]
     error_message: Optional[str] = None
+    approved_by_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
