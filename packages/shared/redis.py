@@ -1,7 +1,9 @@
 """Redis connection manager."""
 
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
+
 import redis.asyncio as aioredis
+
 from packages.shared.config import get_settings
 
 _redis_client: aioredis.Redis | None = None

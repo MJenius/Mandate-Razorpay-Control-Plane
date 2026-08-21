@@ -4,9 +4,11 @@ import base64
 import hashlib
 import hmac
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 import httpx
 from pydantic import BaseModel, Field
+
 from packages.shared.config import get_settings
 from packages.shared.logging import get_logger
 
@@ -16,8 +18,8 @@ logger = get_logger("razorpay.client")
 class RazorpayOrderRequest(BaseModel):
     amount: int = Field(..., gt=0, description="Amount in paise")
     currency: str = Field(default="INR")
-    receipt: Optional[str] = None
-    notes: Dict[str, str] = Field(default_factory=dict)
+    receipt: str | None = None
+    notes: dict[str, str] = Field(default_factory=dict)
     partial_payment: bool = False
 
 
@@ -28,10 +30,10 @@ class RazorpayOrderResponse(BaseModel):
     amount_paid: int = 0
     amount_due: int
     currency: str
-    receipt: Optional[str] = None
+    receipt: str | None = None
     status: str
     attempts: int = 0
-    notes: Dict[str, str] = Field(default_factory=dict)
+    notes: dict[str, str] = Field(default_factory=dict)
     created_at: int
 
 
@@ -41,17 +43,17 @@ class RazorpayPaymentResponse(BaseModel):
     amount: int
     currency: str
     status: str
-    order_id: Optional[str] = None
-    method: Optional[str] = "card"
+    order_id: str | None = None
+    method: str | None = "card"
     captured: bool = True
-    description: Optional[str] = None
+    description: str | None = None
     created_at: int
 
 
 class RazorpayRefundRequest(BaseModel):
     payment_id: str
-    amount: Optional[int] = None
-    notes: Dict[str, str] = Field(default_factory=dict)
+    amount: int | None = None
+    notes: dict[str, str] = Field(default_factory=dict)
     speed: str = "normal"
 
 
@@ -62,7 +64,7 @@ class RazorpayRefundResponse(BaseModel):
     currency: str
     payment_id: str
     status: str
-    notes: Dict[str, str] = Field(default_factory=dict)
+    notes: dict[str, str] = Field(default_factory=dict)
     created_at: int
 
 
@@ -70,10 +72,10 @@ class RazorpayPaymentLinkRequest(BaseModel):
     amount: int
     currency: str = "INR"
     description: str
-    customer_name: Optional[str] = None
-    customer_email: Optional[str] = None
-    customer_contact: Optional[str] = None
-    notes: Dict[str, str] = Field(default_factory=dict)
+    customer_name: str | None = None
+    customer_email: str | None = None
+    customer_contact: str | None = None
+    notes: dict[str, str] = Field(default_factory=dict)
 
 
 class RazorpayPaymentLinkResponse(BaseModel):
@@ -91,10 +93,10 @@ class RazorpayClient:
 
     def __init__(
         self,
-        key_id: Optional[str] = None,
-        key_secret: Optional[str] = None,
-        base_url: Optional[str] = None,
-        mock_mode: Optional[bool] = None,
+        key_id: str | None = None,
+        key_secret: str | None = None,
+        base_url: str | None = None,
+        mock_mode: bool | None = None,
     ) -> None:
         settings = get_settings()
         self.key_id = key_id or settings.RAZORPAY_KEY_ID
@@ -104,7 +106,7 @@ class RazorpayClient:
         self.webhook_secret = settings.RAZORPAY_WEBHOOK_SECRET
 
     @property
-    def _auth_header(self) -> Dict[str, str]:
+    def _auth_header(self) -> dict[str, str]:
         token = base64.b64encode(f"{self.key_id}:{self.key_secret}".encode()).decode("utf-8")
         return {
             "Authorization": f"Basic {token}",
@@ -116,7 +118,10 @@ class RazorpayClient:
     # ========================================================
     async def create_order(self, req: RazorpayOrderRequest) -> RazorpayOrderResponse:
         import time
-        logger.info("creating_razorpay_order", amount=req.amount, currency=req.currency, mock=self.mock_mode)
+
+        logger.info(
+            "creating_razorpay_order", amount=req.amount, currency=req.currency, mock=self.mock_mode
+        )
 
         if self.mock_mode:
             order_id = f"order_mock_{uuid.uuid4().hex[:14]}"
@@ -131,7 +136,7 @@ class RazorpayClient:
                 created_at=int(time.time()),
             )
 
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "amount": req.amount,
             "currency": req.currency,
             "receipt": req.receipt or f"rcpt_{uuid.uuid4().hex[:8]}",
@@ -151,6 +156,7 @@ class RazorpayClient:
 
     async def fetch_order(self, order_id: str) -> RazorpayOrderResponse:
         import time
+
         logger.info("fetching_razorpay_order", order_id=order_id, mock=self.mock_mode)
 
         if self.mock_mode:
@@ -177,6 +183,7 @@ class RazorpayClient:
     # ========================================================
     async def fetch_payment(self, payment_id: str) -> RazorpayPaymentResponse:
         import time
+
         logger.info("fetching_razorpay_payment", payment_id=payment_id, mock=self.mock_mode)
 
         if self.mock_mode:
@@ -197,9 +204,14 @@ class RazorpayClient:
             resp.raise_for_status()
             return RazorpayPaymentResponse(**resp.json())
 
-    async def capture_payment(self, payment_id: str, amount: int, currency: str = "INR") -> RazorpayPaymentResponse:
+    async def capture_payment(
+        self, payment_id: str, amount: int, currency: str = "INR"
+    ) -> RazorpayPaymentResponse:
         import time
-        logger.info("capturing_razorpay_payment", payment_id=payment_id, amount=amount, mock=self.mock_mode)
+
+        logger.info(
+            "capturing_razorpay_payment", payment_id=payment_id, amount=amount, mock=self.mock_mode
+        )
 
         if self.mock_mode:
             return RazorpayPaymentResponse(
@@ -225,7 +237,13 @@ class RazorpayClient:
     # ========================================================
     async def create_refund(self, req: RazorpayRefundRequest) -> RazorpayRefundResponse:
         import time
-        logger.info("creating_razorpay_refund", payment_id=req.payment_id, amount=req.amount, mock=self.mock_mode)
+
+        logger.info(
+            "creating_razorpay_refund",
+            payment_id=req.payment_id,
+            amount=req.amount,
+            mock=self.mock_mode,
+        )
 
         if self.mock_mode:
             refund_id = f"rfnd_mock_{uuid.uuid4().hex[:14]}"
@@ -239,7 +257,7 @@ class RazorpayClient:
                 created_at=int(time.time()),
             )
 
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "notes": req.notes,
             "speed": req.speed,
         }
@@ -257,6 +275,7 @@ class RazorpayClient:
 
     async def fetch_refund(self, refund_id: str) -> RazorpayRefundResponse:
         import time
+
         logger.info("fetching_razorpay_refund", refund_id=refund_id, mock=self.mock_mode)
 
         if self.mock_mode:
@@ -281,8 +300,11 @@ class RazorpayClient:
     # ========================================================
     # Payment Links Subsystem
     # ========================================================
-    async def create_payment_link(self, req: RazorpayPaymentLinkRequest) -> RazorpayPaymentLinkResponse:
+    async def create_payment_link(
+        self, req: RazorpayPaymentLinkRequest
+    ) -> RazorpayPaymentLinkResponse:
         import time
+
         logger.info("creating_payment_link", amount=req.amount, mock=self.mock_mode)
 
         if self.mock_mode:
@@ -297,7 +319,7 @@ class RazorpayClient:
                 created_at=int(time.time()),
             )
 
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "amount": req.amount,
             "currency": req.currency,
             "description": req.description,
@@ -330,6 +352,7 @@ class RazorpayClient:
 
     async def fetch_payment_link(self, link_id: str) -> RazorpayPaymentLinkResponse:
         import time
+
         logger.info("fetching_payment_link", link_id=link_id, mock=self.mock_mode)
 
         if self.mock_mode:
@@ -362,6 +385,7 @@ class RazorpayClient:
 
     async def cancel_payment_link(self, link_id: str) -> RazorpayPaymentLinkResponse:
         import time
+
         logger.info("cancelling_payment_link", link_id=link_id, mock=self.mock_mode)
 
         if self.mock_mode:
@@ -400,14 +424,14 @@ class RazorpayClient:
         razorpay_order_id: str,
         razorpay_payment_id: str,
         razorpay_signature: str,
-        secret: Optional[str] = None,
+        secret: str | None = None,
     ) -> bool:
         """Verifies payment signature from checkout completion."""
         active_secret = secret or self.key_secret
         if not active_secret or not razorpay_signature:
             return False
 
-        message = f"{razorpay_order_id}|{razorpay_payment_id}".encode("utf-8")
+        message = f"{razorpay_order_id}|{razorpay_payment_id}".encode()
         generated_signature = hmac.new(
             key=active_secret.encode("utf-8"),
             msg=message,
@@ -420,7 +444,7 @@ class RazorpayClient:
         self,
         body: str,
         signature: str,
-        secret: Optional[str] = None,
+        secret: str | None = None,
     ) -> bool:
         """
         Verifies SHA256 HMAC signature sent in X-Razorpay-Signature header against the raw body bytes.

@@ -1,10 +1,12 @@
 """FastAPI main application entrypoint."""
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
 from apps.api.routes.agent_chat import router as agent_chat_router
 from apps.api.routes.agents import router as agents_router
 from apps.api.routes.audit import router as audit_router
@@ -29,14 +31,27 @@ logger = get_logger("api.main")
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Lifespan context for DB initialization and teardown."""
     logger.info("mandate_api_starting")
-    settings = get_settings()
-    
-    # Auto-create tables in development / test SQLite / Postgres
+
+    # Auto-create tables and bootstrap default demo agents in development / test
     try:
         engine = get_engine()
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
-        logger.info("database_schema_synced")
+        # Proactively bootstrap seed agents only if database is currently unseeded
+        from sqlalchemy import func, select
+
+        from apps.api.routes.demo import reset_demo_dataset
+        from packages.core.models import Agent
+        from packages.shared.database import get_session_factory
+
+        session_factory = get_session_factory()
+        async with session_factory() as session:
+            agent_count = (await session.execute(select(func.count(Agent.id)))).scalar() or 0
+            if agent_count == 0:
+                await reset_demo_dataset(db=session)
+                logger.info("database_demo_state_bootstrapped")
+            else:
+                logger.info("database_already_seeded", agent_count=agent_count)
     except Exception as exc:
         logger.warning("database_sync_deferred", reason=str(exc))
 

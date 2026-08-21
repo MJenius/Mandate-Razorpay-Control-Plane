@@ -15,6 +15,9 @@ import {
   Menu,
   X,
   ExternalLink,
+  ShoppingBag,
+  GitBranch,
+  Play,
 } from "lucide-react";
 
 const NAV_ITEMS = [
@@ -24,7 +27,11 @@ const NAV_ITEMS = [
   { name: "Transactions", href: "/transactions", icon: CreditCard },
   { name: "Audit Log", href: "/audit", icon: FileText },
   { name: "Policies", href: "/policies", icon: Sliders },
-  { name: "Evaluation", href: "/evaluation", icon: FlaskConical },
+  { name: "Evaluation", href: "/eval", icon: FlaskConical },
+  { name: "Commerce (MCP)", href: "/commerce", icon: ShoppingBag },
+  { name: "Delegation Graph", href: "/delegation", icon: GitBranch },
+  { name: "Reliability & DLQ", href: "/operations", icon: Activity },
+  { name: "Competition Demo", href: "/demo", icon: Play },
 ];
 
 export default function DashboardLayout({

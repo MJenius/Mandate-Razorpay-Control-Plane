@@ -2,7 +2,11 @@
 
 import logging
 import sys
+from typing import cast
+
 import structlog
+import structlog.stdlib
+
 from packages.shared.config import get_settings
 
 
@@ -17,7 +21,8 @@ def setup_logging() -> None:
             structlog.processors.StackInfoRenderer(),
             structlog.dev.set_exc_info,
             structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.JSONRenderer() if settings.ENVIRONMENT == "production" 
+            structlog.processors.JSONRenderer()
+            if settings.ENVIRONMENT == "production"
             else structlog.dev.ConsoleRenderer(),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(log_level),
@@ -27,5 +32,5 @@ def setup_logging() -> None:
     )
 
 
-def get_logger(name: str = "mandate") -> structlog.BoundLogger:
-    return structlog.get_logger(name)
+def get_logger(name: str = "mandate") -> structlog.stdlib.BoundLogger:
+    return cast(structlog.stdlib.BoundLogger, structlog.get_logger(name))

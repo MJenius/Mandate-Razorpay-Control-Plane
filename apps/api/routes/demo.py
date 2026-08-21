@@ -1,14 +1,19 @@
 """Competition Demo Mode API: Clean-slate dataset reset and scripted 5-minute showcase execution."""
 
-import time
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy import delete, select
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
-from packages.core.enums import AgentStatus, AuditAction, MandateStatus, OperationStatus, OperationType, PrincipalRole
+
+from packages.core.enums import (
+    AuditAction,
+    OperationType,
+    PrincipalRole,
+)
 from packages.core.models import (
     Agent,
     AgentExecutionTrace,
@@ -42,7 +47,7 @@ class DemoResetResponse(BaseModel):
 
 
 class DemoScenarioRunRequest(BaseModel):
-    step_number: int = 1 # 1 through 5
+    step_number: int = 1  # 1 through 5
 
 
 class DemoScenarioRunResponse(BaseModel):
@@ -51,11 +56,11 @@ class DemoScenarioRunResponse(BaseModel):
     description: str
     decision: str
     authorized: bool
-    operation_id: Optional[str]
+    operation_id: str | None
     amount_inr: str
     gateway_effect: str
     audit_trace_id: str
-    details: Dict[str, Any]
+    details: dict[str, Any]
 
 
 @router.post("/reset", response_model=DemoResetResponse)
@@ -131,11 +136,11 @@ async def reset_demo_dataset(
         granted_by_id=principal.id,
         delegation_depth=0,
         currency="INR",
-        max_amount_per_op=2500000, # ₹25,000
-        aggregate_spend_limit=10000000, # ₹1,00,000
-        delegated_child_budget_allocated=1500000, # ₹15,000 reserved for child
+        max_amount_per_op=2500000,  # ₹25,000
+        aggregate_spend_limit=10000000,  # ₹1,00,000
+        delegated_child_budget_allocated=1500000,  # ₹15,000 reserved for child
         allowed_operations=["CREATE_ORDER", "CREATE_PAYMENT_LINK"],
-        valid_until=datetime.now(timezone.utc) + timedelta(days=30),
+        valid_until=datetime.now(UTC) + timedelta(days=30),
     )
     db.add(parent_mandate)
     await db.flush()
@@ -147,10 +152,10 @@ async def reset_demo_dataset(
         parent_mandate_id=parent_mandate.id,
         delegation_depth=1,
         currency="INR",
-        max_amount_per_op=1000000, # ₹10,000
-        aggregate_spend_limit=1500000, # ₹15,000
+        max_amount_per_op=1000000,  # ₹10,000
+        aggregate_spend_limit=1500000,  # ₹15,000
         allowed_operations=["CREATE_ORDER"],
-        valid_until=datetime.now(timezone.utc) + timedelta(days=15),
+        valid_until=datetime.now(UTC) + timedelta(days=15),
     )
     db.add(child_mandate)
 
@@ -175,7 +180,7 @@ async def reset_demo_dataset(
         child_agent_id=child_agent.id,
         parent_mandate_id=parent_mandate.id,
         child_mandate_id=child_mandate.id,
-        seeded_at_utc=datetime.now(timezone.utc).isoformat(),
+        seeded_at_utc=datetime.now(UTC).isoformat(),
     )
 
 
@@ -203,16 +208,22 @@ async def run_scripted_demo_scenario(
     if step == 1:
         child_mandate = await db.get(Mandate, "mnd_child_delegated_01")
         if not child_mandate:
-            raise HTTPException(status_code=400, detail="Demo dataset not seeded. Call /demo/reset first.")
+            raise HTTPException(
+                status_code=400, detail="Demo dataset not seeded. Call /demo/reset first."
+            )
 
         op_req = OperationCreate(
             idempotency_key=f"idemp_demo_step1_{uuid.uuid4().hex[:8]}",
             agent_id="agt_procurement_child_01",
             mandate_id=child_mandate.id,
             operation_type=OperationType.CREATE_ORDER,
-            amount=650000, # ₹6,500
+            amount=650000,  # ₹6,500
             currency="INR",
-            payload={"product_id": "prod_kb_01", "product_name": "Keychron K2 Keyboard", "quantity": 1},
+            payload={
+                "product_id": "prod_kb_01",
+                "product_name": "Keychron K2 Keyboard",
+                "quantity": 1,
+            },
         )
         op = await request_financial_operation(payload=op_req, db=db)
         return DemoScenarioRunResponse(
@@ -231,12 +242,17 @@ async def run_scripted_demo_scenario(
     # Step 2: Overreaching Bulk Order Attack
     elif step == 2:
         child_mandate = await db.get(Mandate, "mnd_child_delegated_01")
+        if not child_mandate:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Demo not initialized. Run reset first.",
+            )
         op_req = OperationCreate(
             idempotency_key=f"idemp_demo_step2_{uuid.uuid4().hex[:8]}",
             agent_id="agt_procurement_child_01",
             mandate_id=child_mandate.id,
             operation_type=OperationType.CREATE_ORDER,
-            amount=65000000, # ₹6,50,000 (100 units)
+            amount=65000000,  # ₹6,50,000 (100 units)
             currency="INR",
             payload={"product_id": "prod_kb_01", "quantity": 100},
         )
@@ -251,17 +267,27 @@ async def run_scripted_demo_scenario(
             amount_inr="₹6,50,000.00",
             gateway_effect="0 Razorpay Calls Dispatched (Zero-Gateway-Dispatch Invariant)",
             audit_trace_id=op.trace_id,
-            details={"status": op.status.value, "rejection_reasons": op.policy_evaluation_details.get("rejection_reasons", [])},
+            details={
+                "status": op.status.value,
+                "rejection_reasons": op.policy_evaluation_details.get("rejection_reasons", [])
+                if op.policy_evaluation_details
+                else [],
+            },
         )
 
     # Step 3: Compromised Agent Cross-Role Attack
     elif step == 3:
         child_mandate = await db.get(Mandate, "mnd_child_delegated_01")
+        if not child_mandate:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Demo not initialized. Run reset first.",
+            )
         op_req = OperationCreate(
             idempotency_key=f"idemp_demo_step3_{uuid.uuid4().hex[:8]}",
             agent_id="agt_procurement_child_01",
             mandate_id=child_mandate.id,
-            operation_type=OperationType.CREATE_REFUND, # Unpermitted operation
+            operation_type=OperationType.CREATE_REFUND,  # Unpermitted operation
             amount=250000,
             currency="INR",
             payload={"payment_id": "pay_fake_attacker_01"},
@@ -277,7 +303,10 @@ async def run_scripted_demo_scenario(
             amount_inr="₹2,500.00",
             gateway_effect="0 Razorpay Calls Dispatched",
             audit_trace_id=op.trace_id,
-            details={"status": op.status.value, "rejection_reasons": op.policy_evaluation_details.get("rejection_reasons", [])},
+            details={
+                "status": op.status.value,
+                "rejection_reasons": op.policy_evaluation_details.get("rejection_reasons", []),
+            },
         )
 
     # Step 4: Reliability Webhook Auto-Convergence
@@ -293,13 +322,24 @@ async def run_scripted_demo_scenario(
             payload={},
         )
         op = await request_financial_operation(payload=op_req, db=db)
-        
+
         # Webhook event processing
         wh_event_data = {
             "event": "payment.captured",
-            "payload": {"payment": {"entity": {"id": "pay_demo_cap_01", "order_id": f"order_mock_{op.operation_id[:8]}", "amount": 150000, "status": "captured"}}},
+            "payload": {
+                "payment": {
+                    "entity": {
+                        "id": "pay_demo_cap_01",
+                        "order_id": f"order_mock_{op.operation_id[:8]}",
+                        "amount": 150000,
+                        "status": "captured",
+                    }
+                }
+            },
         }
-        await _process_domain_webhook_event(db=db, event_type="payment.captured", event_data=wh_event_data)
+        await _process_domain_webhook_event(
+            db=db, event_type="payment.captured", event_data=wh_event_data
+        )
         await db.commit()
 
         return DemoScenarioRunResponse(
@@ -334,7 +374,10 @@ async def run_scripted_demo_scenario(
             amount_inr="₹0.00",
             gateway_effect="Child Mandate Status: REVOKED (New Transactions Disabled)",
             audit_trace_id="aud_cascade_revocation",
-            details={"parent_status": "REVOKED", "child_status": child.status.value if child else "REVOKED"},
+            details={
+                "parent_status": "REVOKED",
+                "child_status": child.status.value if child else "REVOKED",
+            },
         )
 
     raise HTTPException(status_code=400, detail=f"Invalid demo step {step}. Valid steps: 1 to 5.")

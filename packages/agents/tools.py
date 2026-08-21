@@ -1,16 +1,14 @@
 """Agent Tool Definitions, Catalog dataset, and Mandate tool call conversions."""
 
-import uuid
-from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from typing import Any
 
 # Synthetic Product Catalog for Shopping Agent
-PRODUCTS_CATALOG: Dict[str, Dict[str, Any]] = {
+PRODUCTS_CATALOG: dict[str, dict[str, Any]] = {
     "prod_kb_01": {
         "id": "prod_kb_01",
         "name": "Keychron K2 Mechanical Keyboard",
         "category": "Electronics",
-        "price_paise": 650000, # 6,500 INR
+        "price_paise": 650000,  # 6,500 INR
         "description": "Wireless Mechanical Keyboard with Gateron switches",
         "stock": 15,
     },
@@ -18,7 +16,7 @@ PRODUCTS_CATALOG: Dict[str, Dict[str, Any]] = {
         "id": "prod_mouse_01",
         "name": "Logitech MX Master 3S Mouse",
         "category": "Electronics",
-        "price_paise": 899900, # 8,999 INR
+        "price_paise": 899900,  # 8,999 INR
         "description": "Performance Wireless Mouse with ergonomic grip",
         "stock": 8,
     },
@@ -26,7 +24,7 @@ PRODUCTS_CATALOG: Dict[str, Dict[str, Any]] = {
         "id": "prod_desk_mat_01",
         "name": "Ergonomic Wool Felt Desk Mat",
         "category": "Accessories",
-        "price_paise": 150000, # 1,500 INR
+        "price_paise": 150000,  # 1,500 INR
         "description": "Premium non-slip desk protector",
         "stock": 50,
     },
@@ -34,7 +32,7 @@ PRODUCTS_CATALOG: Dict[str, Dict[str, Any]] = {
         "id": "prod_monitor_high_end",
         "name": "Dell UltraSharp 32-inch 4K Monitor",
         "category": "Electronics",
-        "price_paise": 7500000, # 75,000 INR (Useful for testing per-op limit rejection)
+        "price_paise": 7500000,  # 75,000 INR (Useful for testing per-op limit rejection)
         "description": "Professional color-accurate 4K USB-C monitor",
         "stock": 3,
     },
@@ -42,7 +40,7 @@ PRODUCTS_CATALOG: Dict[str, Dict[str, Any]] = {
         "id": "prod_enterprise_server",
         "name": "Rackmount GPU AI Workstation",
         "category": "Enterprise",
-        "price_paise": 45000000, # 4,50,000 INR (Useful for testing aggregate limit rejection)
+        "price_paise": 45000000,  # 4,50,000 INR (Useful for testing aggregate limit rejection)
         "description": "Dedicated on-prem inference rack",
         "stock": 1,
     },
@@ -168,20 +166,22 @@ SUPPORT_AGENT_TOOLS = [
 ]
 
 
-def execute_local_catalog_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+def execute_local_catalog_tool(tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     """Executes non-financial informative tool (e.g. browsing product catalog)."""
     if tool_name == "browse_catalog":
         category = arguments.get("category")
         results = []
         for p in PRODUCTS_CATALOG.values():
             if not category or p["category"].lower() == category.lower():
-                results.append({
-                    "product_id": p["id"],
-                    "name": p["name"],
-                    "category": p["category"],
-                    "price_inr": f"Rs. {p['price_paise'] / 100:,.2f}",
-                    "price_paise": p["price_paise"],
-                    "in_stock": p["stock"] > 0,
-                })
+                results.append(
+                    {
+                        "product_id": p["id"],
+                        "name": p["name"],
+                        "category": p["category"],
+                        "price_inr": f"Rs. {p['price_paise'] / 100:,.2f}",
+                        "price_paise": p["price_paise"],
+                        "in_stock": p["stock"] > 0,
+                    }
+                )
         return {"catalog_items": results}
     return {"error": f"Unknown local tool '{tool_name}'"}

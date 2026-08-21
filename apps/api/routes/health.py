@@ -1,8 +1,10 @@
 """API Route Handlers for Health, Readiness, and Liveness checks."""
 
-from typing import Any, Dict
+from typing import Any
+
 from fastapi import APIRouter, Response, status
 from sqlalchemy import text
+
 from packages.shared.database import get_session_factory
 from packages.shared.redis import get_redis_client
 
@@ -10,13 +12,13 @@ router = APIRouter(tags=["Health"])
 
 
 @router.get("/health", status_code=status.HTTP_200_OK)
-async def health_check() -> Dict[str, str]:
+async def health_check() -> dict[str, str]:
     """Process liveness probe."""
     return {"status": "ok", "service": "mandate-api"}
 
 
 @router.get("/ready")
-async def readiness_check(response: Response) -> Dict[str, Any]:
+async def readiness_check(response: Response) -> dict[str, Any]:
     """Postgres and Redis dependency readiness probe."""
     checks = {
         "database": "down",

@@ -1,12 +1,14 @@
 """Automated Read-Only Gateway Reconciliation Worker."""
 
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
-from sqlalchemy import select, update
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from packages.core.enums import OperationStatus, TransactionStatus
-from packages.core.models import FinancialOperation, Mandate, ReconciliationReport, Transaction
+
+from packages.core.enums import OperationStatus
+from packages.core.models import FinancialOperation, ReconciliationReport, Transaction
 from packages.razorpay.client import RazorpayClient
 from packages.shared.database import get_session_factory
 from packages.shared.logging import get_logger
@@ -17,10 +19,10 @@ logger = get_logger("worker.reconciliation")
 class ReconciliationResult:
     def __init__(self) -> None:
         self.total_checked: int = 0
-        self.discrepancies: List[Dict[str, Any]] = []
+        self.discrepancies: list[dict[str, Any]] = []
         self.synced_count: int = 0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "total_checked": self.total_checked,
             "discrepancies_count": len(self.discrepancies),
@@ -30,8 +32,8 @@ class ReconciliationResult:
 
 
 async def run_gateway_reconciliation(
-    session_factory: Optional[async_sessionmaker[AsyncSession]] = None,
-    lookback_minutes: int = 1440, # 24 hours
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+    lookback_minutes: int = 1440,  # 24 hours
 ) -> ReconciliationResult:
     """
     Read-Only Gateway Reconciliation Engine:
@@ -45,7 +47,7 @@ async def run_gateway_reconciliation(
     session_maker = session_factory or get_session_factory()
     razorpay = RazorpayClient()
     result = ReconciliationResult()
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=lookback_minutes)
+    cutoff = datetime.now(UTC) - timedelta(minutes=lookback_minutes)
 
     async with session_maker() as db:
         # 1. Inspect all active and executing transactions
@@ -91,7 +93,9 @@ async def run_gateway_reconciliation(
                     logger.error("reconciliation_amount_mismatch", **disc)
 
             except Exception as e:
-                logger.error("reconciliation_order_check_failed", order_id=tx.gateway_order_id, error=str(e))
+                logger.error(
+                    "reconciliation_order_check_failed", order_id=tx.gateway_order_id, error=str(e)
+                )
 
         # 2. Persist Immutable Reconciliation Report
         report = ReconciliationReport(

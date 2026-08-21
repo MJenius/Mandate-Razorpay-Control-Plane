@@ -1,20 +1,15 @@
 """Adversarial Evaluation Lab and Security Benchmark API routes."""
 
-from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from packages.core.enums import MandateStatus
 from packages.core.models import Agent, Mandate
 from packages.eval.harness import BenchmarkMetrics, EvaluationHarness
-from packages.eval.profiles import (
-    BuggyAgentProfile,
-    CompromisedAgentProfile,
-    LegitimateAgentProfile,
-    OverreachingAgentProfile,
-    PromptInjectionAgentProfile,
-)
 from packages.shared.database import get_db_session
 from packages.shared.logging import get_logger
 
@@ -23,13 +18,13 @@ router = APIRouter(prefix="/evaluation", tags=["Adversarial Evaluation Lab"])
 
 
 class RunBenchmarkRequest(BaseModel):
-    agent_id: Optional[str] = None
+    agent_id: str | None = None
     seed: int = Field(default=42, description="Deterministic seed for reproducible evaluation")
     multiplier: int = Field(default=1, ge=1, le=50, description="Multiplier for scenario volume")
 
 
 @router.get("/scenarios")
-async def list_adversarial_scenarios() -> List[Dict[str, Any]]:
+async def list_adversarial_scenarios() -> list[dict[str, Any]]:
     """Returns the library of standard adversarial attack scenarios across all 5 profiles."""
     harness = EvaluationHarness(db=None)  # Type ignore for scenario listing
     scenarios = harness.load_all_scenarios(multiplier=1)
@@ -51,7 +46,9 @@ async def execute_adversarial_benchmark(
         agent = await db.get(Agent, payload.agent_id)
         if not agent:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-        mandate_stmt = select(Mandate).where(Mandate.agent_id == agent.id, Mandate.status == MandateStatus.ACTIVE)
+        mandate_stmt = select(Mandate).where(
+            Mandate.agent_id == agent.id, Mandate.status == MandateStatus.ACTIVE
+        )
         mandate = (await db.execute(mandate_stmt)).scalars().first()
     else:
         # Query default benchmark agent
@@ -68,13 +65,15 @@ async def execute_adversarial_benchmark(
 
     logger.info("running_adversarial_benchmark", seed=payload.seed, multiplier=payload.multiplier)
     harness = EvaluationHarness(db=db, seed=payload.seed)
-    metrics = await harness.run_evaluation(agent=agent, mandate=mandate, multiplier=payload.multiplier)
+    metrics = await harness.run_evaluation(
+        agent=agent, mandate=mandate, multiplier=payload.multiplier
+    )
 
     return metrics
 
 
 @router.get("/baselines")
-async def get_comparative_baselines() -> Dict[str, Any]:
+async def get_comparative_baselines() -> dict[str, Any]:
     """Returns baseline comparative analysis: No Controls vs Basic Permissions vs Mandate."""
     return {
         "models": {

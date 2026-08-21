@@ -1,13 +1,14 @@
 """Formal Financial Operation State Machine with transition matrix and validation."""
 
-from typing import Dict, Set
 from packages.core.enums import OperationStatus
 
 
 class InvalidStateTransitionError(Exception):
     """Raised when an illegal state transition is attempted on a FinancialOperation."""
 
-    def __init__(self, current_status: OperationStatus, target_status: OperationStatus, reason: str = "") -> None:
+    def __init__(
+        self, current_status: OperationStatus, target_status: OperationStatus, reason: str = ""
+    ) -> None:
         self.current_status = current_status
         self.target_status = target_status
         self.reason = reason
@@ -31,7 +32,7 @@ class FinancialOperationStateMachine:
     POLICY_REJECTED -> [] (Terminal State)
     """
 
-    ALLOWED_TRANSITIONS: Dict[OperationStatus, Set[OperationStatus]] = {
+    ALLOWED_TRANSITIONS: dict[OperationStatus, set[OperationStatus]] = {
         OperationStatus.INITIATED: {
             OperationStatus.POLICY_APPROVED,
             OperationStatus.POLICY_REJECTED,
@@ -75,7 +76,9 @@ class FinancialOperationStateMachine:
         return target in cls.ALLOWED_TRANSITIONS.get(current, set())
 
     @classmethod
-    def validate_transition(cls, current: OperationStatus, target: OperationStatus, context_info: str = "") -> None:
+    def validate_transition(
+        cls, current: OperationStatus, target: OperationStatus, context_info: str = ""
+    ) -> None:
         """Validates transition and raises InvalidStateTransitionError if illegal."""
         if not cls.can_transition(current, target):
             raise InvalidStateTransitionError(

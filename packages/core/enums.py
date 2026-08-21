@@ -1,22 +1,22 @@
 """Core domain enums defining system states, roles, operation types, and policy decisions."""
 
-from enum import Enum
+from enum import StrEnum
 
 
-class PrincipalRole(str, Enum):
+class PrincipalRole(StrEnum):
     ADMIN = "ADMIN"
     DEVELOPER = "DEVELOPER"
     AUDITOR = "AUDITOR"
     SERVICE = "SERVICE"
 
 
-class AgentStatus(str, Enum):
+class AgentStatus(StrEnum):
     ACTIVE = "ACTIVE"
     SUSPENDED = "SUSPENDED"
     REVOKED = "REVOKED"
 
 
-class MandateStatus(str, Enum):
+class MandateStatus(StrEnum):
     PENDING_APPROVAL = "PENDING_APPROVAL"
     ACTIVE = "ACTIVE"
     SUSPENDED = "SUSPENDED"
@@ -25,7 +25,7 @@ class MandateStatus(str, Enum):
     REVOKED = "REVOKED"
 
 
-class OperationType(str, Enum):
+class OperationType(StrEnum):
     CREATE_ORDER = "CREATE_ORDER"
     CAPTURE_PAYMENT = "CAPTURE_PAYMENT"
     CREATE_REFUND = "CREATE_REFUND"
@@ -33,13 +33,13 @@ class OperationType(str, Enum):
     CANCEL_PAYMENT_LINK = "CANCEL_PAYMENT_LINK"
 
 
-class PolicyDecisionType(str, Enum):
+class PolicyDecisionType(StrEnum):
     ALLOW = "ALLOW"
     DENY = "DENY"
     REQUIRE_HUMAN_REVIEW = "REQUIRE_HUMAN_REVIEW"
 
 
-class OperationStatus(str, Enum):
+class OperationStatus(StrEnum):
     INITIATED = "INITIATED"
     POLICY_CHECK_PENDING = "POLICY_CHECK_PENDING"
     POLICY_APPROVED = "POLICY_APPROVED"
@@ -52,7 +52,7 @@ class OperationStatus(str, Enum):
     CANCELLED = "CANCELLED"
 
 
-class TransactionStatus(str, Enum):
+class TransactionStatus(StrEnum):
     CREATED = "CREATED"
     AUTHORIZED = "AUTHORIZED"
     CAPTURED = "CAPTURED"
@@ -60,7 +60,7 @@ class TransactionStatus(str, Enum):
     FAILED = "FAILED"
 
 
-class AuditAction(str, Enum):
+class AuditAction(StrEnum):
     PRINCIPAL_CREATED = "PRINCIPAL_CREATED"
     AGENT_REGISTERED = "AGENT_REGISTERED"
     AGENT_STATUS_CHANGED = "AGENT_STATUS_CHANGED"

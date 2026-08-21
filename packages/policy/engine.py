@@ -2,21 +2,22 @@
 
 import time
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from packages.core.enums import AgentStatus, MandateStatus, PolicyDecisionType
 from packages.core.models import Agent, FinancialOperation, Mandate
 
 
-def ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:
+def ensure_utc(dt: datetime | None) -> datetime | None:
     if dt is None:
         return None
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 
 class PolicyRuleDiagnostic(BaseModel):
@@ -27,7 +28,7 @@ class PolicyRuleDiagnostic(BaseModel):
     passed: bool
     reason: str
     latency_ms: float
-    context: Dict[str, Any] = Field(default_factory=dict)
+    context: dict[str, Any] = Field(default_factory=dict)
 
 
 class PolicyEvaluationResult(BaseModel):
@@ -40,10 +41,10 @@ class PolicyEvaluationResult(BaseModel):
     agent_id: str
     mandate_id: str
     total_latency_ms: float
-    rejection_reasons: List[str] = Field(default_factory=list)
-    review_reasons: List[str] = Field(default_factory=list)
-    rule_diagnostics: List[PolicyRuleDiagnostic] = Field(default_factory=list)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    rejection_reasons: list[str] = Field(default_factory=list)
+    review_reasons: list[str] = Field(default_factory=list)
+    rule_diagnostics: list[PolicyRuleDiagnostic] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class PolicyRule(ABC):
@@ -58,7 +59,7 @@ class PolicyRule(ABC):
         agent: Agent,
         mandate: Mandate,
         operation: FinancialOperation,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> PolicyRuleDiagnostic:
         pass
 
@@ -73,7 +74,7 @@ class AgentStatusRule(PolicyRule):
         agent: Agent,
         mandate: Mandate,
         operation: FinancialOperation,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> PolicyRuleDiagnostic:
         start = time.perf_counter()
         if agent.status != AgentStatus.ACTIVE:
@@ -104,10 +105,10 @@ class MandateLifecycleRule(PolicyRule):
         agent: Agent,
         mandate: Mandate,
         operation: FinancialOperation,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> PolicyRuleDiagnostic:
         start = time.perf_counter()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         if mandate.status != MandateStatus.ACTIVE:
             return PolicyRuleDiagnostic(
@@ -161,10 +162,10 @@ class HierarchicalDelegationRule(PolicyRule):
         agent: Agent,
         mandate: Mandate,
         operation: FinancialOperation,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> PolicyRuleDiagnostic:
         start = time.perf_counter()
-        
+
         # If this is a root mandate (no parent), pass immediately
         if not mandate.parent_mandate_id:
             return PolicyRuleDiagnostic(
@@ -176,9 +177,9 @@ class HierarchicalDelegationRule(PolicyRule):
             )
 
         # Context session check if available
-        db_session: Optional[AsyncSession] = context.get("db") if context else None
+        db_session: AsyncSession | None = context.get("db") if context else None
         if db_session:
-            curr_parent_id = mandate.parent_mandate_id
+            curr_parent_id: str | None = mandate.parent_mandate_id
             while curr_parent_id:
                 parent = await db_session.get(Mandate, curr_parent_id)
                 if not parent:
@@ -221,7 +222,7 @@ class CurrencyMatchRule(PolicyRule):
         agent: Agent,
         mandate: Mandate,
         operation: FinancialOperation,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> PolicyRuleDiagnostic:
         start = time.perf_counter()
         if operation.currency.upper() != mandate.currency.upper():
@@ -231,7 +232,10 @@ class CurrencyMatchRule(PolicyRule):
                 passed=False,
                 reason=f"Requested currency '{operation.currency}' does not match mandate bound '{mandate.currency}'",
                 latency_ms=round((time.perf_counter() - start) * 1000, 3),
-                context={"requested_currency": operation.currency, "mandate_currency": mandate.currency},
+                context={
+                    "requested_currency": operation.currency,
+                    "mandate_currency": mandate.currency,
+                },
             )
         return PolicyRuleDiagnostic(
             rule_name=self.name,
@@ -252,10 +256,14 @@ class AllowedOperationTypeRule(PolicyRule):
         agent: Agent,
         mandate: Mandate,
         operation: FinancialOperation,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> PolicyRuleDiagnostic:
         start = time.perf_counter()
-        op_type = operation.operation_type.value if hasattr(operation.operation_type, "value") else str(operation.operation_type)
+        op_type = (
+            operation.operation_type.value
+            if hasattr(operation.operation_type, "value")
+            else str(operation.operation_type)
+        )
         if mandate.allowed_operations and op_type not in mandate.allowed_operations:
             return PolicyRuleDiagnostic(
                 rule_name=self.name,
@@ -284,7 +292,7 @@ class PerTransactionLimitRule(PolicyRule):
         agent: Agent,
         mandate: Mandate,
         operation: FinancialOperation,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> PolicyRuleDiagnostic:
         start = time.perf_counter()
         if operation.amount > mandate.max_amount_per_op:
@@ -315,7 +323,7 @@ class AggregateSpendLimitRule(PolicyRule):
         agent: Agent,
         mandate: Mandate,
         operation: FinancialOperation,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> PolicyRuleDiagnostic:
         start = time.perf_counter()
         reserved = getattr(mandate, "reserved_spend", 0)
@@ -355,7 +363,7 @@ class HumanReviewThresholdRule(PolicyRule):
         agent: Agent,
         mandate: Mandate,
         operation: FinancialOperation,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> PolicyRuleDiagnostic:
         start = time.perf_counter()
         if getattr(operation, "approved_by_id", None):
@@ -388,8 +396,8 @@ class HumanReviewThresholdRule(PolicyRule):
 
 
 class PolicyEngine:
-    def __init__(self, rules: Optional[List[PolicyRule]] = None) -> None:
-        self.rules: List[PolicyRule] = rules or [
+    def __init__(self, rules: list[PolicyRule] | None = None) -> None:
+        self.rules: list[PolicyRule] = rules or [
             AgentStatusRule(),
             MandateLifecycleRule(),
             HierarchicalDelegationRule(),
@@ -405,12 +413,12 @@ class PolicyEngine:
         agent: Agent,
         mandate: Mandate,
         operation: FinancialOperation,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> PolicyEvaluationResult:
         start_time = time.perf_counter()
-        diagnostics: List[PolicyRuleDiagnostic] = []
-        rejection_reasons: List[str] = []
-        review_reasons: List[str] = []
+        diagnostics: list[PolicyRuleDiagnostic] = []
+        rejection_reasons: list[str] = []
+        review_reasons: list[str] = []
 
         final_decision = PolicyDecisionType.ALLOW
 
@@ -421,7 +429,10 @@ class PolicyEngine:
             if diag.decision == PolicyDecisionType.DENY:
                 rejection_reasons.append(f"[{diag.rule_name}] {diag.reason}")
                 final_decision = PolicyDecisionType.DENY
-            elif diag.decision == PolicyDecisionType.REQUIRE_HUMAN_REVIEW and final_decision != PolicyDecisionType.DENY:
+            elif (
+                diag.decision == PolicyDecisionType.REQUIRE_HUMAN_REVIEW
+                and final_decision != PolicyDecisionType.DENY
+            ):
                 review_reasons.append(f"[{diag.rule_name}] {diag.reason}")
                 final_decision = PolicyDecisionType.REQUIRE_HUMAN_REVIEW
 

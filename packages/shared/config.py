@@ -1,7 +1,7 @@
 """Shared configuration and settings module using pydantic-settings."""
 
 from functools import lru_cache
-from typing import List
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -25,8 +25,10 @@ class Settings(BaseSettings):
     API_HOST: str = "0.0.0.0"
 
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://mandate_user:mandate_secure_password@localhost:5432/mandate_db"
-    
+    DATABASE_URL: str = (
+        "postgresql+asyncpg://mandate_user:mandate_secure_password@localhost:5432/mandate_db"
+    )
+
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
 
@@ -34,8 +36,12 @@ class Settings(BaseSettings):
     RAZORPAY_KEY_ID: str = Field(default="", description="Razorpay Key ID")
     RAZORPAY_KEY_SECRET: str = Field(default="", description="Razorpay Key Secret")
     RAZORPAY_WEBHOOK_SECRET: str = Field(default="", description="Razorpay Webhook Secret")
-    RAZORPAY_BASE_URL: str = Field(default="https://api.razorpay.com/v1", description="Razorpay API Base URL")
-    RAZORPAY_MOCK_MODE: bool = Field(default=False, description="When True, uses mock responses without live API calls")
+    RAZORPAY_BASE_URL: str = Field(
+        default="https://api.razorpay.com/v1", description="Razorpay API Base URL"
+    )
+    RAZORPAY_MOCK_MODE: bool = Field(
+        default=False, description="When True, uses mock responses without live API calls"
+    )
 
     # LLM Providers Configuration
     OPENAI_API_KEY: str = Field(default="", description="OpenAI API Key")
@@ -43,10 +49,10 @@ class Settings(BaseSettings):
     DEFAULT_LLM_PROVIDER: str = Field(default="openai", description="Primary LLM provider")
 
     @property
-    def cors_origins(self) -> List[str]:
+    def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",") if origin.strip()]
 
 
-@lru_cache()
+@lru_cache
 def get_settings() -> Settings:
     return Settings()

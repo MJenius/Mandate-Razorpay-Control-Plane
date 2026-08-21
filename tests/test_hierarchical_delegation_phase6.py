@@ -1,11 +1,12 @@
 """Comprehensive Test Suite for Phase 6: Multi-Agent Delegation & Hierarchical Financial Authority."""
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select
-from packages.core.enums import AgentStatus, MandateStatus, PrincipalRole
+
+from packages.core.enums import PrincipalRole
 from packages.core.models import Agent, Mandate, Principal
 from tests.conftest import TestingSessionLocal
 
@@ -19,12 +20,24 @@ async def test_hierarchical_mandate_delegation_flow(async_client: AsyncClient) -
     Procurement Agent executes valid ₹6,500 purchase order through Mandate -> ALLOW.
     """
     async with TestingSessionLocal() as session:
-        principal = Principal(name="Commerce Enterprise", email="commerce@mandate.dev", role=PrincipalRole.ADMIN)
+        principal = Principal(
+            name="Commerce Enterprise", email="commerce@mandate.dev", role=PrincipalRole.ADMIN
+        )
         session.add(principal)
         await session.flush()
 
-        parent_agent = Agent(name="Primary Shopping Agent", owner_id=principal.id, agent_type="SHOPPING", api_key_hash="hash_p6_parent")
-        child_agent = Agent(name="Procurement Sub-Agent", owner_id=principal.id, agent_type="PROCUREMENT", api_key_hash="hash_p6_child")
+        parent_agent = Agent(
+            name="Primary Shopping Agent",
+            owner_id=principal.id,
+            agent_type="SHOPPING",
+            api_key_hash="hash_p6_parent",
+        )
+        child_agent = Agent(
+            name="Procurement Sub-Agent",
+            owner_id=principal.id,
+            agent_type="PROCUREMENT",
+            api_key_hash="hash_p6_child",
+        )
         session.add_all([parent_agent, child_agent])
         await session.flush()
 
@@ -33,10 +46,10 @@ async def test_hierarchical_mandate_delegation_flow(async_client: AsyncClient) -
             agent_id=parent_agent.id,
             granted_by_id=principal.id,
             currency="INR",
-            max_amount_per_op=2500000, # ₹25,000
-            aggregate_spend_limit=10000000, # ₹1,00,000
+            max_amount_per_op=2500000,  # ₹25,000
+            aggregate_spend_limit=10000000,  # ₹1,00,000
             allowed_operations=["CREATE_ORDER", "CREATE_PAYMENT_LINK"],
-            valid_until=datetime.now(timezone.utc) + timedelta(days=30),
+            valid_until=datetime.now(UTC) + timedelta(days=30),
         )
         session.add(root_mandate)
         await session.commit()
@@ -46,13 +59,15 @@ async def test_hierarchical_mandate_delegation_flow(async_client: AsyncClient) -
     # 1. Delegate Sub-Mandate (₹15,000 limit, ₹10,000 per-op)
     delegate_payload = {
         "target_agent_id": child_agent_id,
-        "max_amount_per_op": 1000000, # ₹10,000 (<= ₹25,000)
-        "aggregate_spend_limit": 1500000, # ₹15,000 (<= ₹1,00,000)
+        "max_amount_per_op": 1000000,  # ₹10,000 (<= ₹25,000)
+        "aggregate_spend_limit": 1500000,  # ₹15,000 (<= ₹1,00,000)
         "allowed_operations": ["CREATE_ORDER"],
-        "valid_until": (datetime.now(timezone.utc) + timedelta(days=15)).isoformat(),
+        "valid_until": (datetime.now(UTC) + timedelta(days=15)).isoformat(),
     }
 
-    del_res = await async_client.post(f"/api/v1/mandates/{parent_id}/delegate", json=delegate_payload)
+    del_res = await async_client.post(
+        f"/api/v1/mandates/{parent_id}/delegate", json=delegate_payload
+    )
     assert del_res.status_code == 201
     child_mandate_data = del_res.json()
     assert child_mandate_data["parent_mandate_id"] == parent_id
@@ -65,7 +80,7 @@ async def test_hierarchical_mandate_delegation_flow(async_client: AsyncClient) -
         "agent_id": child_agent_id,
         "mandate_id": child_mandate_id,
         "operation_type": "CREATE_ORDER",
-        "amount": 650000, # ₹6,500 Keychron Keyboard
+        "amount": 650000,  # ₹6,500 Keychron Keyboard
         "currency": "INR",
         "payload": {"product_id": "prod_kb_01", "quantity": 1},
     }
@@ -87,12 +102,18 @@ async def test_child_delegation_privilege_escalation_blocked(async_client: Async
     3. Child asks for USD currency -> BLOCKED.
     """
     async with TestingSessionLocal() as session:
-        principal = Principal(name="Escalation Corp", email="esc@mandate.dev", role=PrincipalRole.ADMIN)
+        principal = Principal(
+            name="Escalation Corp", email="esc@mandate.dev", role=PrincipalRole.ADMIN
+        )
         session.add(principal)
         await session.flush()
 
-        parent_agent = Agent(name="Parent Agent", owner_id=principal.id, api_key_hash="hash_esc_parent")
-        child_agent = Agent(name="Rogue Child", owner_id=principal.id, api_key_hash="hash_esc_child")
+        parent_agent = Agent(
+            name="Parent Agent", owner_id=principal.id, api_key_hash="hash_esc_parent"
+        )
+        child_agent = Agent(
+            name="Rogue Child", owner_id=principal.id, api_key_hash="hash_esc_child"
+        )
         session.add_all([parent_agent, child_agent])
         await session.flush()
 
@@ -100,10 +121,10 @@ async def test_child_delegation_privilege_escalation_blocked(async_client: Async
             agent_id=parent_agent.id,
             granted_by_id=principal.id,
             currency="INR",
-            max_amount_per_op=2500000, # ₹25,000
-            aggregate_spend_limit=5000000, # ₹50,000
+            max_amount_per_op=2500000,  # ₹25,000
+            aggregate_spend_limit=5000000,  # ₹50,000
             allowed_operations=["CREATE_ORDER"],
-            valid_until=datetime.now(timezone.utc) + timedelta(days=30),
+            valid_until=datetime.now(UTC) + timedelta(days=30),
         )
         session.add(parent_mandate)
         await session.commit()
@@ -115,10 +136,10 @@ async def test_child_delegation_privilege_escalation_blocked(async_client: Async
         f"/api/v1/mandates/{parent_id}/delegate",
         json={
             "target_agent_id": child_agent_id,
-            "max_amount_per_op": 5000000, # ₹50,000
+            "max_amount_per_op": 5000000,  # ₹50,000
             "aggregate_spend_limit": 5000000,
             "allowed_operations": ["CREATE_ORDER"],
-            "valid_until": (datetime.now(timezone.utc) + timedelta(days=10)).isoformat(),
+            "valid_until": (datetime.now(UTC) + timedelta(days=10)).isoformat(),
         },
     )
     assert res1.status_code == 400
@@ -131,8 +152,8 @@ async def test_child_delegation_privilege_escalation_blocked(async_client: Async
             "target_agent_id": child_agent_id,
             "max_amount_per_op": 1000000,
             "aggregate_spend_limit": 2000000,
-            "allowed_operations": ["CREATE_REFUND"], # Unpermitted in parent
-            "valid_until": (datetime.now(timezone.utc) + timedelta(days=10)).isoformat(),
+            "allowed_operations": ["CREATE_REFUND"],  # Unpermitted in parent
+            "valid_until": (datetime.now(UTC) + timedelta(days=10)).isoformat(),
         },
     )
     assert res2.status_code == 400
@@ -147,7 +168,7 @@ async def test_child_delegation_privilege_escalation_blocked(async_client: Async
             "max_amount_per_op": 100000,
             "aggregate_spend_limit": 100000,
             "allowed_operations": ["CREATE_ORDER"],
-            "valid_until": (datetime.now(timezone.utc) + timedelta(days=10)).isoformat(),
+            "valid_until": (datetime.now(UTC) + timedelta(days=10)).isoformat(),
         },
     )
     assert res3.status_code == 400
@@ -155,7 +176,9 @@ async def test_child_delegation_privilege_escalation_blocked(async_client: Async
 
 
 @pytest.mark.asyncio
-async def test_cascading_parent_revocation_blocks_child_transactions(async_client: AsyncClient) -> None:
+async def test_cascading_parent_revocation_blocks_child_transactions(
+    async_client: AsyncClient,
+) -> None:
     """
     Demonstrates Cascading Revocation Propagation:
     1. Parent grants child mandate.
@@ -163,12 +186,18 @@ async def test_cascading_parent_revocation_blocks_child_transactions(async_clien
     3. Child transactions immediately evaluate to DENY with zero gateway side-effects.
     """
     async with TestingSessionLocal() as session:
-        principal = Principal(name="Cascade Corp", email="cascade@mandate.dev", role=PrincipalRole.ADMIN)
+        principal = Principal(
+            name="Cascade Corp", email="cascade@mandate.dev", role=PrincipalRole.ADMIN
+        )
         session.add(principal)
         await session.flush()
 
-        parent_agent = Agent(name="Shopping Master", owner_id=principal.id, api_key_hash="hash_cas_p")
-        child_agent = Agent(name="Procurement Sub", owner_id=principal.id, api_key_hash="hash_cas_c")
+        parent_agent = Agent(
+            name="Shopping Master", owner_id=principal.id, api_key_hash="hash_cas_p"
+        )
+        child_agent = Agent(
+            name="Procurement Sub", owner_id=principal.id, api_key_hash="hash_cas_c"
+        )
         session.add_all([parent_agent, child_agent])
         await session.flush()
 
@@ -179,7 +208,7 @@ async def test_cascading_parent_revocation_blocks_child_transactions(async_clien
             max_amount_per_op=3000000,
             aggregate_spend_limit=10000000,
             allowed_operations=["CREATE_ORDER"],
-            valid_until=datetime.now(timezone.utc) + timedelta(days=30),
+            valid_until=datetime.now(UTC) + timedelta(days=30),
         )
         session.add(parent_mandate)
         await session.commit()
@@ -194,14 +223,16 @@ async def test_cascading_parent_revocation_blocks_child_transactions(async_clien
             "max_amount_per_op": 1000000,
             "aggregate_spend_limit": 2000000,
             "allowed_operations": ["CREATE_ORDER"],
-            "valid_until": (datetime.now(timezone.utc) + timedelta(days=10)).isoformat(),
+            "valid_until": (datetime.now(UTC) + timedelta(days=10)).isoformat(),
         },
     )
     assert del_res.status_code == 201
     child_mandate_id = del_res.json()["id"]
 
     # 2. Revoke Parent Mandate
-    rev_res = await async_client.post(f"/api/v1/mandates/{parent_id}/revoke", json={"reason": "Compromised credential"})
+    rev_res = await async_client.post(
+        f"/api/v1/mandates/{parent_id}/revoke", json={"reason": "Compromised credential"}
+    )
     assert rev_res.status_code == 200
     assert rev_res.json()["status"] == "REVOKED"
 

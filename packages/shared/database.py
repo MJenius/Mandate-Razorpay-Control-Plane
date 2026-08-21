@@ -1,12 +1,14 @@
 """Database session management with SQLAlchemy Async Engine."""
 
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
+
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+
 from packages.shared.config import get_settings
 
 _engine: AsyncEngine | None = None

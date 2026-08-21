@@ -1,12 +1,12 @@
 """Large-scale reproducible benchmark runner executing 1,000 empirical scenarios."""
 
 import asyncio
-import json
 import time
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict
+from datetime import UTC, datetime, timedelta
+
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from packages.core.enums import AgentStatus, MandateStatus, PrincipalRole
+
+from packages.core.enums import AgentStatus, PrincipalRole
 from packages.core.models import Agent, Base, Mandate, Principal
 from packages.eval.harness import BenchmarkMetrics, EvaluationHarness
 from packages.shared.logging import get_logger
@@ -16,7 +16,7 @@ logger = get_logger("eval.large_scale")
 
 async def run_thousand_scenario_benchmark(
     seed: int = 123,
-    multiplier: int = 100, # 10 base profiles * 100 multiplier = 1,000 scenarios
+    multiplier: int = 100,  # 10 base profiles * 100 multiplier = 1,000 scenarios
 ) -> BenchmarkMetrics:
     """
     Executes a 1,000-scenario reproducible benchmark evaluating Mandate against:
@@ -25,6 +25,7 @@ async def run_thousand_scenario_benchmark(
     """
     # Configure Razorpay mock mode for local large-scale benchmarking to avoid live gateway rate limits (HTTP 429)
     from apps.api.routes import operations
+
     operations.razorpay_client.mock_mode = True
 
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
@@ -35,7 +36,9 @@ async def run_thousand_scenario_benchmark(
 
     async with session_maker() as db:
         # Create deterministic evaluation principal & agent
-        principal = Principal(name="Benchmark Enterprise", email=f"bench_{seed}@mandate.dev", role=PrincipalRole.ADMIN)
+        principal = Principal(
+            name="Benchmark Enterprise", email=f"bench_{seed}@mandate.dev", role=PrincipalRole.ADMIN
+        )
         db.add(principal)
         await db.flush()
 
@@ -54,10 +57,10 @@ async def run_thousand_scenario_benchmark(
             agent_id=agent.id,
             granted_by_id=principal.id,
             currency="INR",
-            max_amount_per_op=2500000, # ₹25,000 per op
-            aggregate_spend_limit=500000000, # ₹50,00,000
+            max_amount_per_op=2500000,  # ₹25,000 per op
+            aggregate_spend_limit=500000000,  # ₹50,00,000
             allowed_operations=["CREATE_ORDER", "CREATE_PAYMENT_LINK"],
-            valid_until=datetime.now(timezone.utc) + timedelta(days=30),
+            valid_until=datetime.now(UTC) + timedelta(days=30),
         )
         db.add(mandate)
         await db.commit()

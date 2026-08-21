@@ -2,13 +2,15 @@
 
 import time
 import uuid
-from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from typing import Any
+
+from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from packages.core.enums import MandateStatus, OperationType
-from packages.core.models import Agent, AuditEvent, FinancialOperation, Mandate
+
+from packages.core.enums import MandateStatus
+from packages.core.models import Agent, Mandate
 from packages.core.schemas import OperationCreate
 from packages.mcp.catalog import RAZORPAY_MCP_TOOL_REGISTRY, get_filtered_mcp_tools
 from packages.razorpay.client import RazorpayClient
@@ -23,24 +25,28 @@ razorpay_client = RazorpayClient()
 
 class MCPJsonRpcRequest(BaseModel):
     """Standard JSON-RPC 2.0 MCP Request payload."""
+
     jsonrpc: str = Field(default="2.0")
-    id: Optional[Any] = Field(default="1")
+    id: Any | None = Field(default="1")
     method: str = Field(..., description="MCP method: 'tools/list', 'tools/call', or 'initialize'")
-    params: Dict[str, Any] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
 
 
 class MCPJsonRpcResponse(BaseModel):
     """Standard JSON-RPC 2.0 MCP Response payload."""
+
     jsonrpc: str = "2.0"
-    id: Optional[Any] = "1"
-    result: Optional[Dict[str, Any]] = None
-    error: Optional[Dict[str, Any]] = None
+    id: Any | None = "1"
+    result: dict[str, Any] | None = None
+    error: dict[str, Any] | None = None
 
 
 @router.post("", response_model=MCPJsonRpcResponse)
 async def handle_mcp_jsonrpc_gateway(
     request_payload: MCPJsonRpcRequest,
-    x_agent_id: str = Header(..., alias="X-Agent-Id", description="Authenticated calling AI Agent ID"),
+    x_agent_id: str = Header(
+        ..., alias="X-Agent-Id", description="Authenticated calling AI Agent ID"
+    ),
     db: AsyncSession = Depends(get_db_session),
 ) -> MCPJsonRpcResponse:
     """
@@ -68,7 +74,10 @@ async def handle_mcp_jsonrpc_gateway(
     if not mandate:
         return MCPJsonRpcResponse(
             id=request_payload.id,
-            error={"code": -32002, "message": f"Agent '{agent.name}' has no active financial mandate"},
+            error={
+                "code": -32002,
+                "message": f"Agent '{agent.name}' has no active financial mandate",
+            },
         )
 
     # 2. Handle MCP Methods
@@ -113,8 +122,8 @@ async def _dispatch_mcp_tool_call(
     db: AsyncSession,
     agent: Agent,
     mandate: Mandate,
-    tool_name: Optional[str],
-    arguments: Dict[str, Any],
+    tool_name: str | None,
+    arguments: dict[str, Any],
     rpc_id: Any,
 ) -> MCPJsonRpcResponse:
     """Validates schema arguments strictly, converts to Mandate FinancialOperation, and dispatches."""
@@ -152,7 +161,11 @@ async def _dispatch_mcp_tool_call(
                 id=rpc_id,
                 result={
                     "content": [{"type": "text", "text": str(rzp_order.model_dump())}],
-                    "_mandate_meta": {"authorized": True, "read_only": True, "latency_ms": round((time.perf_counter() - start_time) * 1000, 2)},
+                    "_mandate_meta": {
+                        "authorized": True,
+                        "read_only": True,
+                        "latency_ms": round((time.perf_counter() - start_time) * 1000, 2),
+                    },
                 },
             )
         elif tool_name == "payments_fetch_payment":
@@ -168,7 +181,10 @@ async def _dispatch_mcp_tool_call(
             # Attempted unauthorized payout
             return MCPJsonRpcResponse(
                 id=rpc_id,
-                error={"code": -32003, "message": "Policy DENIED: Agent does not possess PAYOUTS authorization."},
+                error={
+                    "code": -32003,
+                    "message": "Policy DENIED: Agent does not possess PAYOUTS authorization.",
+                },
             )
 
     # Case B: Financial Mutating Tool -> Route strictly through Mandate Policy Engine
@@ -195,7 +211,9 @@ async def _dispatch_mcp_tool_call(
                 id=rpc_id,
                 result={
                     "isError": True,
-                    "content": [{"type": "text", "text": f"Mandate Policy DENIED: {op.error_message}"}],
+                    "content": [
+                        {"type": "text", "text": f"Mandate Policy DENIED: {op.error_message}"}
+                    ],
                     "_mandate_meta": {
                         "decision": "DENY",
                         "operation_id": op.operation_id,
@@ -220,7 +238,11 @@ async def _dispatch_mcp_tool_call(
                     "operation_id": op.operation_id,
                     "status": op.status.value,
                     "amount_paise": op.amount,
-                    "remaining_mandate_budget": max(0, mandate.aggregate_spend_limit - (mandate.current_aggregate_spend + mandate.reserved_spend)),
+                    "remaining_mandate_budget": max(
+                        0,
+                        mandate.aggregate_spend_limit
+                        - (mandate.current_aggregate_spend + mandate.reserved_spend),
+                    ),
                     "latency_ms": elapsed_ms,
                 },
             },

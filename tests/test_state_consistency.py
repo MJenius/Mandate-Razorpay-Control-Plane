@@ -1,12 +1,18 @@
 """Tests for State-Consistency Edge Cases: Crash Recovery, Orphan Reservations, Refunds, and Gateway Failures."""
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
-from packages.core.enums import MandateStatus, OperationStatus, OperationType, PrincipalRole, TransactionStatus
-from packages.core.models import Agent, FinancialOperation, Mandate, Principal, Transaction
+
+from packages.core.enums import (
+    OperationStatus,
+    OperationType,
+    PrincipalRole,
+)
+from packages.core.models import Agent, FinancialOperation, Mandate, Principal
 from services.worker.main import reconcile_stuck_reservations
 from tests.conftest import TestingSessionLocal
 
@@ -19,7 +25,9 @@ async def test_reconciliation_releases_crashed_orphan_reservation() -> None:
     and release reserved_spend back to the mandate budget.
     """
     async with TestingSessionLocal() as session:
-        principal = Principal(name="Crash Test Corp", email="crashtest@mandate.dev", role=PrincipalRole.ADMIN)
+        principal = Principal(
+            name="Crash Test Corp", email="crashtest@mandate.dev", role=PrincipalRole.ADMIN
+        )
         session.add(principal)
         await session.flush()
 
@@ -36,13 +44,13 @@ async def test_reconciliation_releases_crashed_orphan_reservation() -> None:
             current_aggregate_spend=0,
             reserved_spend=30000,  # 30,000 reserved
             allowed_operations=["CREATE_ORDER"],
-            valid_until=datetime.now(timezone.utc) + timedelta(days=30),
+            valid_until=datetime.now(UTC) + timedelta(days=30),
         )
         session.add(mandate)
         await session.flush()
 
         # Create an orphan operation that was created 5 minutes ago (simulating a crash)
-        past_time = datetime.now(timezone.utc) - timedelta(minutes=5)
+        past_time = datetime.now(UTC) - timedelta(minutes=5)
         orphan_op = FinancialOperation(
             operation_id=f"op_orphan_{uuid.uuid4().hex[:10]}",
             idempotency_key=f"idemp_orphan_{uuid.uuid4().hex}",
@@ -61,7 +69,9 @@ async def test_reconciliation_releases_crashed_orphan_reservation() -> None:
         op_id = orphan_op.operation_id
 
     # Run reconciliation using test session factory
-    reconciled_count = await reconcile_stuck_reservations(timeout_seconds=60, session_factory=TestingSessionLocal)
+    reconciled_count = await reconcile_stuck_reservations(
+        timeout_seconds=60, session_factory=TestingSessionLocal
+    )
     assert reconciled_count == 1
 
     # Verify mandate reserved_spend is safely released to 0
@@ -78,13 +88,17 @@ async def test_reconciliation_releases_crashed_orphan_reservation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_failed_gateway_dispatch_immediately_releases_reservation(async_client: AsyncClient) -> None:
+async def test_failed_gateway_dispatch_immediately_releases_reservation(
+    async_client: AsyncClient,
+) -> None:
     """
     Verifies that if a gateway call fails during execution, reserved_spend is immediately
     released and does not stay stuck in RESERVED.
     """
     async with TestingSessionLocal() as session:
-        principal = Principal(name="Gateway Fail Corp", email="fail@mandate.dev", role=PrincipalRole.ADMIN)
+        principal = Principal(
+            name="Gateway Fail Corp", email="fail@mandate.dev", role=PrincipalRole.ADMIN
+        )
         session.add(principal)
         await session.flush()
 
@@ -101,7 +115,7 @@ async def test_failed_gateway_dispatch_immediately_releases_reservation(async_cl
             current_aggregate_spend=0,
             reserved_spend=0,
             allowed_operations=["CREATE_REFUND"],
-            valid_until=datetime.now(timezone.utc) + timedelta(days=30),
+            valid_until=datetime.now(UTC) + timedelta(days=30),
         )
         session.add(mandate)
         await session.commit()

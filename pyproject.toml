@@ -57,6 +57,8 @@ ignore = ["B008", "E501"]
 
 [tool.mypy]
 python_version = "3.12"
+explicit_package_bases = true
+mypy_path = "."
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -66,7 +68,7 @@ no_implicit_optional = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["razorpay.*", "asyncpg.*"]
+module = ["asyncpg.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

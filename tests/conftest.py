@@ -1,11 +1,10 @@
-import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
 from apps.api.main import app
 from packages.agents.adapter import MockLLMAdapter
 from packages.core.models import Base
-from packages.shared.config import get_settings
 from packages.shared.database import get_db_session
 
 # Test Database Engine using SQLite in-memory async
@@ -24,10 +23,12 @@ TestingSessionLocal = async_sessionmaker(
 @pytest_asyncio.fixture(scope="function", autouse=True)
 async def setup_test_db():
     from apps.api.routes import operations
+
     operations.razorpay_client.mock_mode = True
 
     # Use mock adapter in tests to ensure hermetic and rate-limit proof test suite
     from apps.api.routes import agent_chat
+
     agent_chat.default_llm_adapter = MockLLMAdapter()
 
     async with test_engine.begin() as conn:

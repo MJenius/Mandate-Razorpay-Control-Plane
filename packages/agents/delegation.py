@@ -1,12 +1,13 @@
 """Multi-Agent Collaborative Commerce Workflows linking User -> Shopping -> Procurement -> Risk -> Mandate -> Razorpay."""
 
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from packages.agents.runner import AgentRunner
+
 from packages.core.enums import OperationType
-from packages.core.models import Agent, FinancialOperation, Mandate, Transaction
+from packages.core.models import Agent, Mandate, Transaction
 from packages.core.schemas import OperationCreate
 from packages.shared.logging import get_logger
 
@@ -16,14 +17,14 @@ logger = get_logger("agents.delegation")
 class CollaborativeCommerceResult:
     def __init__(
         self,
-        order_id: Optional[str],
-        operation_id: Optional[str],
+        order_id: str | None,
+        operation_id: str | None,
         policy_decision: str,
         risk_score: float,
         shopping_agent_id: str,
         procurement_agent_id: str,
         total_amount_paise: int,
-        details: Dict[str, Any],
+        details: dict[str, Any],
     ) -> None:
         self.order_id = order_id
         self.operation_id = operation_id
@@ -34,7 +35,7 @@ class CollaborativeCommerceResult:
         self.total_amount_paise = total_amount_paise
         self.details = details
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "order_id": self.order_id,
             "operation_id": self.operation_id,
@@ -97,6 +98,7 @@ class CollaborativeCommerceCoordinator:
                 "customer_name": customer_name,
                 "delegated_by_agent_id": shopping_agent.id,
                 "risk_agent_score": risk_score,
+                "risk_passed": risk_passed,
             },
         )
 

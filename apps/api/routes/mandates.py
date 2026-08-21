@@ -1,11 +1,13 @@
 """Hierarchical Mandate Lifecycle and Delegation API routes."""
 
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from packages.core.enums import AuditAction, MandateStatus
 from packages.core.models import Agent, AuditEvent, Mandate
 from packages.core.schemas import (
@@ -67,49 +69,14 @@ async def create_mandate(
     return mandate
 
 
-@router.post("/{parent_id}/delegate", response_model=MandateResponse, status_code=status.HTTP_201_CREATED)
-async def delegate_child_mandate(
-    parent_id: str,
-    payload: MandateDelegateRequest,
-    db: AsyncSession = Depends(get_db_session),
-) -> Mandate:
-    """
-    Secure Hierarchical Delegation:
-    Delegates a bounded sub-mandate from parent -> child agent with strict mathematical non-escalation invariants:
-    1. Parent must be ACTIVE and unexpired.
-    2. Depth <= parent.max_delegation_depth.
-    3. child.max_amount_per_op <= parent.max_amount_per_op.
-    4. child.aggregate_spend_limit <= parent remaining available budget.
-    5. child.allowed_operations must be a subset of parent.allowed_operations.
-    6. child.valid_until <= parent.valid_until.
-    7. Atomically reserves delegated budget from parent to prevent concurrent sibling over-delegation.
-    """
-    # 1. Lock Parent Mandate
-    parent_stmt = select(Mandate).where(Mandate.id == parent_id).with_for_update()
-    parent_res = await db.execute(parent_stmt)
-    parent = parent_res.scalar_one_or_none()
-    if not parent:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Parent mandate not found")
-
-    if parent.status != MandateStatus.ACTIVE:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot delegate from parent mandate in status '{parent.status.value}'",
-        )
-
-    # 2. Check Target Agent
-    target_agent = await db.get(Agent, payload.target_agent_id)
-    if not target_agent:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target child agent not found")
-
-    # 3. Delegation Depth Check
+def _validate_delegation_invariants(parent: Mandate, payload: MandateDelegateRequest) -> str:
+    """Validates mathematical non-escalation invariants for child mandate delegation."""
     if parent.delegation_depth >= parent.max_delegation_depth:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Max delegation depth ({parent.max_delegation_depth}) reached for this mandate tree",
         )
 
-    # 4. Currency Non-Escalation
     child_currency = (payload.currency or parent.currency).upper()
     if child_currency != parent.currency.upper():
         raise HTTPException(
@@ -117,14 +84,12 @@ async def delegate_child_mandate(
             detail=f"Privilege escalation: Child currency '{child_currency}' does not match parent bound '{parent.currency}'",
         )
 
-    # 5. Per-Transaction Limit Non-Escalation
     if payload.max_amount_per_op > parent.max_amount_per_op:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Privilege escalation: Requested max_amount_per_op ({payload.max_amount_per_op}) exceeds parent ceiling ({parent.max_amount_per_op})",
         )
 
-    # 6. Operation Type Whitelist Non-Escalation (Subset Check)
     if parent.allowed_operations:
         for op_type in payload.allowed_operations:
             if op_type not in parent.allowed_operations:
@@ -133,25 +98,68 @@ async def delegate_child_mandate(
                     detail=f"Privilege escalation: Operation '{op_type}' is not authorized in parent mandate whitelist",
                 )
 
-    # 7. Expiry Non-Escalation
-    parent_until = parent.valid_until if parent.valid_until.tzinfo else parent.valid_until.replace(tzinfo=timezone.utc)
-    child_until = payload.valid_until if payload.valid_until.tzinfo else payload.valid_until.replace(tzinfo=timezone.utc)
+    parent_until = (
+        parent.valid_until if parent.valid_until.tzinfo else parent.valid_until.replace(tzinfo=UTC)
+    )
+    child_until = (
+        payload.valid_until
+        if payload.valid_until.tzinfo
+        else payload.valid_until.replace(tzinfo=UTC)
+    )
     if child_until > parent_until:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Privilege escalation: Child validity ({child_until.isoformat()}) exceeds parent expiration ({parent_until.isoformat()})",
         )
 
-    # 8. Available Budget Check & Atomic Sibling Reservation
     parent_available = max(
         0,
-        parent.aggregate_spend_limit - (parent.current_aggregate_spend + parent.reserved_spend + parent.delegated_child_budget_allocated),
+        parent.aggregate_spend_limit
+        - (
+            parent.current_aggregate_spend
+            + parent.reserved_spend
+            + parent.delegated_child_budget_allocated
+        ),
     )
     if payload.aggregate_spend_limit > parent_available:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Privilege escalation: Requested aggregate limit ({payload.aggregate_spend_limit}) exceeds parent remaining unallocated budget ({parent_available})",
         )
+
+    return child_currency
+
+
+@router.post(
+    "/{parent_id}/delegate", response_model=MandateResponse, status_code=status.HTTP_201_CREATED
+)
+async def delegate_child_mandate(
+    parent_id: str,
+    payload: MandateDelegateRequest,
+    db: AsyncSession = Depends(get_db_session),
+) -> Mandate:
+    """Delegates a bounded sub-mandate from parent -> child agent with strict non-escalation invariants."""
+    parent_stmt = select(Mandate).where(Mandate.id == parent_id).with_for_update()
+    parent_res = await db.execute(parent_stmt)
+    parent = parent_res.scalar_one_or_none()
+    if not parent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Parent mandate not found"
+        )
+
+    if parent.status != MandateStatus.ACTIVE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot delegate from parent mandate in status '{parent.status.value}'",
+        )
+
+    target_agent = await db.get(Agent, payload.target_agent_id)
+    if not target_agent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Target child agent not found"
+        )
+
+    child_currency = _validate_delegation_invariants(parent, payload)
 
     # Atomically reserve budget from parent for this child delegation tree
     parent.delegated_child_budget_allocated += payload.aggregate_spend_limit
@@ -175,7 +183,6 @@ async def delegate_child_mandate(
     db.add(child_mandate)
     await db.flush()
 
-    # Immutable Audit Log for Delegation
     audit_evt = AuditEvent(
         event_id=f"aud_{uuid.uuid4().hex[:16]}",
         action=AuditAction.MANDATE_CREATED,
@@ -197,12 +204,12 @@ async def delegate_child_mandate(
     return child_mandate
 
 
-@router.get("", response_model=List[MandateResponse])
+@router.get("", response_model=list[MandateResponse])
 async def list_mandates(
-    agent_id: Optional[str] = None,
-    status_filter: Optional[MandateStatus] = None,
+    agent_id: str | None = None,
+    status_filter: MandateStatus | None = None,
     db: AsyncSession = Depends(get_db_session),
-) -> List[Mandate]:
+) -> list[Mandate]:
     """List financial mandates."""
     stmt = select(Mandate).order_by(Mandate.created_at.desc())
     if agent_id:
@@ -302,7 +309,6 @@ async def _cascade_mandate_status(
     reason: str,
 ) -> None:
     """Recursively updates all descendant child mandates down the tree."""
-    # Find all direct and indirect children
     visited = set()
     queue = [root_mandate_id]
 
@@ -318,7 +324,9 @@ async def _cascade_mandate_status(
 
             audit = AuditEvent(
                 event_id=f"aud_{uuid.uuid4().hex[:16]}",
-                action=AuditAction.MANDATE_REVOKED if target_status == MandateStatus.REVOKED else AuditAction.MANDATE_SUSPENDED,
+                action=AuditAction.MANDATE_REVOKED
+                if target_status == MandateStatus.REVOKED
+                else AuditAction.MANDATE_SUSPENDED,
                 actor_id="SYSTEM",
                 actor_type="SYSTEM",
                 resource_id=m.id,
@@ -328,7 +336,6 @@ async def _cascade_mandate_status(
             )
             db.add(audit)
 
-        # Find direct children
         child_stmt = select(Mandate.id).where(Mandate.parent_mandate_id == curr_id)
         child_res = await db.execute(child_stmt)
         for child_id in child_res.scalars().all():
@@ -336,10 +343,10 @@ async def _cascade_mandate_status(
                 queue.append(child_id)
 
 
-@router.get("/graph/tree", response_model=List[Dict[str, Any]])
+@router.get("/graph/tree", response_model=list[dict[str, Any]])
 async def get_delegation_tree(
     db: AsyncSession = Depends(get_db_session),
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Returns the full hierarchical delegation tree of all mandates and agents."""
     stmt = select(Mandate).order_by(Mandate.delegation_depth.asc(), Mandate.created_at.desc())
     res = await db.execute(stmt)
@@ -348,21 +355,23 @@ async def get_delegation_tree(
     tree_nodes = []
     for m in all_mandates:
         agent = await db.get(Agent, m.agent_id)
-        tree_nodes.append({
-            "id": m.id,
-            "parent_id": m.parent_mandate_id,
-            "agent_id": m.agent_id,
-            "agent_name": agent.name if agent else "Unknown",
-            "agent_type": agent.agent_type if agent else "CUSTOM",
-            "status": m.status.value,
-            "currency": m.currency,
-            "max_amount_per_op": m.max_amount_per_op,
-            "aggregate_spend_limit": m.aggregate_spend_limit,
-            "current_spend": m.current_aggregate_spend,
-            "reserved_spend": m.reserved_spend,
-            "delegated_budget": m.delegated_child_budget_allocated,
-            "depth": m.delegation_depth,
-            "valid_until": m.valid_until.isoformat(),
-        })
+        tree_nodes.append(
+            {
+                "id": m.id,
+                "parent_id": m.parent_mandate_id,
+                "agent_id": m.agent_id,
+                "agent_name": agent.name if agent else "Unknown",
+                "agent_type": agent.agent_type if agent else "CUSTOM",
+                "status": m.status.value,
+                "currency": m.currency,
+                "max_amount_per_op": m.max_amount_per_op,
+                "aggregate_spend_limit": m.aggregate_spend_limit,
+                "current_spend": m.current_aggregate_spend,
+                "reserved_spend": m.reserved_spend,
+                "delegated_budget": m.delegated_child_budget_allocated,
+                "depth": m.delegation_depth,
+                "valid_until": m.valid_until.isoformat(),
+            }
+        )
 
     return tree_nodes

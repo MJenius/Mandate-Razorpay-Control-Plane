@@ -4,11 +4,13 @@ import hashlib
 import hmac
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from httpx import AsyncClient
-from packages.core.enums import MandateStatus, OperationStatus, PrincipalRole
-from packages.core.models import Agent, FinancialOperation, Mandate, Principal
+
+from packages.core.enums import MandateStatus, PrincipalRole
+from packages.core.models import Agent, Mandate, Principal
 from packages.shared.config import get_settings
 
 
@@ -25,12 +27,17 @@ async def test_full_order_payment_webhook_flow(async_client: AsyncClient) -> Non
     7. State is settled and Audit Trail is persisted.
     """
     from tests.conftest import TestingSessionLocal
+
     async with TestingSessionLocal() as session:
-        principal = Principal(name="Alpha Corp", email="alpha@mandate.dev", role=PrincipalRole.ADMIN)
+        principal = Principal(
+            name="Alpha Corp", email="alpha@mandate.dev", role=PrincipalRole.ADMIN
+        )
         session.add(principal)
         await session.flush()
 
-        agent = Agent(name="Autonomous Purchaser", owner_id=principal.id, api_key_hash="dummy_hash_123")
+        agent = Agent(
+            name="Autonomous Purchaser", owner_id=principal.id, api_key_hash="dummy_hash_123"
+        )
         session.add(agent)
         await session.flush()
 
@@ -44,7 +51,7 @@ async def test_full_order_payment_webhook_flow(async_client: AsyncClient) -> Non
             current_aggregate_spend=0,
             allowed_operations=["CREATE_ORDER", "CREATE_REFUND"],
             policy_config={},
-            valid_until=datetime.now(timezone.utc) + timedelta(days=30),
+            valid_until=datetime.now(UTC) + timedelta(days=30),
         )
         session.add(mandate)
         await session.commit()
@@ -144,12 +151,15 @@ async def test_full_refund_flow(async_client: AsyncClient) -> None:
     Razorpay Webhook (refund.processed) -> Spend Credited Back -> Audit Trail Recorded.
     """
     from tests.conftest import TestingSessionLocal
+
     async with TestingSessionLocal() as session:
         principal = Principal(name="Beta Corp", email="beta@mandate.dev", role=PrincipalRole.ADMIN)
         session.add(principal)
         await session.flush()
 
-        agent = Agent(name="Support Refund Agent", owner_id=principal.id, api_key_hash="dummy_refund_hash")
+        agent = Agent(
+            name="Support Refund Agent", owner_id=principal.id, api_key_hash="dummy_refund_hash"
+        )
         session.add(agent)
         await session.flush()
 
@@ -162,7 +172,7 @@ async def test_full_refund_flow(async_client: AsyncClient) -> None:
             current_aggregate_spend=15000,
             allowed_operations=["CREATE_REFUND"],
             policy_config={},
-            valid_until=datetime.now(timezone.utc) + timedelta(days=30),
+            valid_until=datetime.now(UTC) + timedelta(days=30),
         )
         session.add(mandate)
         await session.commit()

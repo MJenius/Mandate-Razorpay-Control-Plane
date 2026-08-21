@@ -1,8 +1,10 @@
 """Pydantic request and response schemas for API serialization."""
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
+
 from packages.core.enums import (
     AgentStatus,
     AuditAction,
@@ -34,15 +36,15 @@ class PrincipalResponse(BaseModel):
 
 class AgentCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=128)
-    description: Optional[str] = None
+    description: str | None = None
     owner_id: str
     agent_type: str = "SHOPPING"
-    metadata_json: Dict[str, Any] = Field(default_factory=dict)
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentStatusUpdate(BaseModel):
     status: AgentStatus
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 class AgentResponse(BaseModel):
@@ -50,11 +52,11 @@ class AgentResponse(BaseModel):
 
     id: str
     name: str
-    description: Optional[str]
+    description: str | None
     owner_id: str
     status: AgentStatus
     agent_type: str
-    metadata_json: Dict[str, Any]
+    metadata_json: dict[str, Any]
     created_at: datetime
     updated_at: datetime
 
@@ -63,27 +65,34 @@ class MandateCreate(BaseModel):
     agent_id: str
     granted_by_id: str
     currency: str = "INR"
-    max_amount_per_op: int = Field(..., gt=0, description="Amount in smallest unit, e.g. paise for INR")
-    aggregate_spend_limit: int = Field(..., gt=0, description="Amount in smallest unit, e.g. paise for INR")
-    review_threshold_amount: Optional[int] = Field(None, gt=0)
-    allowed_operations: List[str] = Field(default_factory=list)
-    policy_config: Dict[str, Any] = Field(default_factory=dict)
+    max_amount_per_op: int = Field(
+        ..., gt=0, description="Amount in smallest unit, e.g. paise for INR"
+    )
+    aggregate_spend_limit: int = Field(
+        ..., gt=0, description="Amount in smallest unit, e.g. paise for INR"
+    )
+    review_threshold_amount: int | None = Field(None, gt=0)
+    allowed_operations: list[str] = Field(default_factory=list)
+    policy_config: dict[str, Any] = Field(default_factory=dict)
     valid_until: datetime
 
 
 class MandateDelegateRequest(BaseModel):
     """Request to delegate a bounded child sub-mandate to another agent."""
+
     target_agent_id: str
-    currency: Optional[str] = None
+    currency: str | None = None
     max_amount_per_op: int = Field(..., gt=0, description="Must be <= parent.max_amount_per_op")
     aggregate_spend_limit: int = Field(..., gt=0, description="Must be <= parent available budget")
-    review_threshold_amount: Optional[int] = None
-    allowed_operations: List[str] = Field(default_factory=list, description="Must be subset of parent allowed operations")
+    review_threshold_amount: int | None = None
+    allowed_operations: list[str] = Field(
+        default_factory=list, description="Must be subset of parent allowed operations"
+    )
     valid_until: datetime = Field(..., description="Must be <= parent.valid_until")
 
 
 class MandateStatusUpdate(BaseModel):
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 class MandateResponse(BaseModel):
@@ -92,7 +101,7 @@ class MandateResponse(BaseModel):
     id: str
     agent_id: str
     granted_by_id: str
-    parent_mandate_id: Optional[str] = None
+    parent_mandate_id: str | None = None
     delegation_depth: int = 0
     max_delegation_depth: int = 2
     status: MandateStatus
@@ -102,10 +111,10 @@ class MandateResponse(BaseModel):
     current_aggregate_spend: int
     reserved_spend: int
     delegated_child_budget_allocated: int = 0
-    review_threshold_amount: Optional[int]
-    allowed_operations: List[str]
-    policy_config: Dict[str, Any]
-    suspension_reason: Optional[str]
+    review_threshold_amount: int | None
+    allowed_operations: list[str]
+    policy_config: dict[str, Any]
+    suspension_reason: str | None
     version: int
     valid_from: datetime
     valid_until: datetime
@@ -120,13 +129,13 @@ class OperationCreate(BaseModel):
     operation_type: OperationType
     amount: int = Field(..., gt=0)
     currency: str = "INR"
-    payload: Dict[str, Any] = Field(default_factory=dict)
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
 class HumanApprovalRequest(BaseModel):
     approved_by_id: str
     approved: bool
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 class OperationResponse(BaseModel):
@@ -141,10 +150,10 @@ class OperationResponse(BaseModel):
     status: OperationStatus
     amount: int
     currency: str
-    payload: Dict[str, Any]
-    policy_evaluation_details: Dict[str, Any]
-    error_message: Optional[str]
-    approved_by_id: Optional[str]
+    payload: dict[str, Any]
+    policy_evaluation_details: dict[str, Any]
+    error_message: str | None
+    approved_by_id: str | None
     trace_id: str
     created_at: datetime
     updated_at: datetime
@@ -156,17 +165,17 @@ class TransactionResponse(BaseModel):
     id: str
     operation_id: str
     gateway_name: str
-    gateway_order_id: Optional[str]
-    gateway_payment_id: Optional[str]
-    gateway_refund_id: Optional[str]
-    gateway_payment_link_id: Optional[str]
-    gateway_payment_link_url: Optional[str]
+    gateway_order_id: str | None
+    gateway_payment_id: str | None
+    gateway_refund_id: str | None
+    gateway_payment_link_id: str | None
+    gateway_payment_link_url: str | None
     amount: int
     currency: str
     status: TransactionStatus
-    gateway_response: Dict[str, Any]
-    error_code: Optional[str]
-    error_description: Optional[str]
+    gateway_response: dict[str, Any]
+    error_code: str | None
+    error_description: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -179,8 +188,8 @@ class PaymentVerifyRequest(BaseModel):
 
 class RefundCreateRequest(BaseModel):
     payment_id: str
-    amount: Optional[int] = None
-    notes: Dict[str, Any] = Field(default_factory=dict)
+    amount: int | None = None
+    notes: dict[str, Any] = Field(default_factory=dict)
 
 
 class WebhookEventResponse(BaseModel):
@@ -192,9 +201,9 @@ class WebhookEventResponse(BaseModel):
     status: str
     processed: bool
     processing_attempts: int
-    error_message: Optional[str]
+    error_message: str | None
     received_at: datetime
-    processed_at: Optional[datetime]
+    processed_at: datetime | None
 
 
 class AuditEventResponse(BaseModel):
@@ -207,8 +216,8 @@ class AuditEventResponse(BaseModel):
     actor_type: str
     resource_id: str
     resource_type: str
-    payload: Dict[str, Any]
-    previous_state: Optional[Dict[str, Any]]
-    new_state: Optional[Dict[str, Any]]
-    trace_id: Optional[str]
+    payload: dict[str, Any]
+    previous_state: dict[str, Any] | None
+    new_state: dict[str, Any] | None
+    trace_id: str | None
     timestamp: datetime

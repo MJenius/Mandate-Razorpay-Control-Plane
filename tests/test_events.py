@@ -1,8 +1,9 @@
 """Tests for Event Bus and event schemas."""
 
 import pytest
-from packages.events.bus import AuditLogEvent, InMemoryEventBus
+
 from packages.core.enums import AuditAction
+from packages.events.bus import AuditLogEvent, InMemoryEventBus
 
 
 @pytest.mark.asyncio

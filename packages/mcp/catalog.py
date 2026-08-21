@@ -1,12 +1,13 @@
 """Razorpay MCP Tool Catalog, Category Definitions, and Dynamic Mandate Filtering."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 from packages.core.enums import OperationType
 from packages.core.models import Agent, Mandate
 
 # Comprehensive Tool Catalog covering Razorpay Model Context Protocol (MCP) server endpoints across all 8 functional domains:
 # (Payments, Orders, Payment Links, Refunds, QR Codes, Settlements, Invoices, Payouts)
-RAZORPAY_MCP_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {
+RAZORPAY_MCP_TOOL_REGISTRY: dict[str, dict[str, Any]] = {
     # 1. Orders & Payments (Buyer / Purchasing tools)
     "payments_create_order": {
         "name": "payments_create_order",
@@ -16,9 +17,18 @@ RAZORPAY_MCP_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "amount": {"type": "integer", "description": "Amount in smallest currency unit (paise for INR)"},
-                "currency": {"type": "string", "description": "3-letter ISO currency code (e.g. INR)"},
-                "receipt": {"type": "string", "description": "Unique receipt reference for the order"},
+                "amount": {
+                    "type": "integer",
+                    "description": "Amount in smallest currency unit (paise for INR)",
+                },
+                "currency": {
+                    "type": "string",
+                    "description": "3-letter ISO currency code (e.g. INR)",
+                },
+                "receipt": {
+                    "type": "string",
+                    "description": "Unique receipt reference for the order",
+                },
                 "notes": {"type": "object", "description": "Key-value metadata dictionary"},
             },
             "required": ["amount", "currency"],
@@ -60,7 +70,10 @@ RAZORPAY_MCP_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "payment_id": {"type": "string", "description": "Razorpay payment ID (e.g. pay_xxx)"},
+                "payment_id": {
+                    "type": "string",
+                    "description": "Razorpay payment ID (e.g. pay_xxx)",
+                },
             },
             "required": ["payment_id"],
             "additionalProperties": False,
@@ -95,7 +108,6 @@ RAZORPAY_MCP_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {
             "additionalProperties": False,
         },
     },
-
     # 2. Payment Links & Invoicing (Merchant tools)
     "payments_create_payment_link": {
         "name": "payments_create_payment_link",
@@ -107,7 +119,10 @@ RAZORPAY_MCP_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {
             "properties": {
                 "amount": {"type": "integer", "description": "Amount in paise"},
                 "currency": {"type": "string", "description": "Currency code (e.g. INR)"},
-                "description": {"type": "string", "description": "Payment link invoice description"},
+                "description": {
+                    "type": "string",
+                    "description": "Payment link invoice description",
+                },
                 "customer_name": {"type": "string", "description": "Recipient name"},
                 "customer_email": {"type": "string", "description": "Recipient email"},
                 "customer_contact": {"type": "string", "description": "Recipient phone"},
@@ -145,7 +160,6 @@ RAZORPAY_MCP_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {
             "additionalProperties": False,
         },
     },
-
     # 3. Customer Refunds (Support tools)
     "payments_create_refund": {
         "name": "payments_create_refund",
@@ -156,7 +170,10 @@ RAZORPAY_MCP_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {
             "type": "object",
             "properties": {
                 "payment_id": {"type": "string", "description": "Payment ID to refund"},
-                "amount": {"type": "integer", "description": "Refund amount in paise (optional for full refund)"},
+                "amount": {
+                    "type": "integer",
+                    "description": "Refund amount in paise (optional for full refund)",
+                },
                 "notes": {"type": "object", "description": "Refund notes/reason"},
             },
             "required": ["payment_id"],
@@ -190,7 +207,6 @@ RAZORPAY_MCP_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {
             "additionalProperties": False,
         },
     },
-
     # 4. QR Codes & Instant Collection
     "qr_codes_create": {
         "name": "qr_codes_create",
@@ -238,7 +254,6 @@ RAZORPAY_MCP_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {
             "additionalProperties": False,
         },
     },
-
     # 5. Merchant Settlements & Bank Reconciliation (Finance tools)
     "settlements_fetch_all": {
         "name": "settlements_fetch_all",
@@ -281,7 +296,6 @@ RAZORPAY_MCP_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {
             "additionalProperties": False,
         },
     },
-
     # 6. Invoices & Billing
     "invoices_create": {
         "name": "invoices_create",
@@ -328,7 +342,6 @@ RAZORPAY_MCP_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {
             "additionalProperties": False,
         },
     },
-
     # 7. Customers & Tokenization
     "customers_create": {
         "name": "customers_create",
@@ -360,7 +373,6 @@ RAZORPAY_MCP_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {
             "additionalProperties": False,
         },
     },
-
     # 8. Privileged Banking Payouts (RazorpayX Restricted Tools)
     "payouts_create": {
         "name": "payouts_create",
@@ -414,15 +426,15 @@ RAZORPAY_MCP_TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {
 TOTAL_REGISTRY_TOOL_COUNT = len(RAZORPAY_MCP_TOOL_REGISTRY)
 
 
-def get_filtered_mcp_tools(agent: Agent, mandate: Mandate) -> List[Dict[str, Any]]:
+def get_filtered_mcp_tools(agent: Agent, mandate: Mandate) -> list[dict[str, Any]]:
     """
     Dynamic MCP Tool Filtering:
     Filters the registered Razorpay MCP tool surface down to the exact subset authorized
     by the calling AI Agent's active financial mandate.
     """
-    filtered_tools: List[Dict[str, Any]] = []
+    filtered_tools: list[dict[str, Any]] = []
 
-    for tool_name, tool_def in RAZORPAY_MCP_TOOL_REGISTRY.items():
+    for _tool_name, tool_def in RAZORPAY_MCP_TOOL_REGISTRY.items():
         op_type = tool_def.get("operation_type")
 
         # 1. Read-only informative tools:
@@ -432,7 +444,10 @@ def get_filtered_mcp_tools(agent: Agent, mandate: Mandate) -> List[Dict[str, Any
                 if "PAYOUTS" in mandate.allowed_operations:
                     filtered_tools.append(tool_def)
             elif tool_def["category"] == "SETTLEMENTS":
-                if "SETTLEMENTS" in mandate.allowed_operations or agent.agent_type in ["FINANCE", "ADMIN"]:
+                if "SETTLEMENTS" in mandate.allowed_operations or agent.agent_type in [
+                    "FINANCE",
+                    "ADMIN",
+                ]:
                     filtered_tools.append(tool_def)
             else:
                 filtered_tools.append(tool_def)

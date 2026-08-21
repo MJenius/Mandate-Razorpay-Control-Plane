@@ -4,12 +4,25 @@ import hashlib
 import hmac
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
-from packages.core.enums import MandateStatus, OperationStatus, OperationType, PrincipalRole, TransactionStatus
-from packages.core.models import Agent, FinancialOperation, Mandate, Principal, Transaction, WebhookEvent
+
+from packages.core.enums import (
+    OperationStatus,
+    OperationType,
+    PrincipalRole,
+    TransactionStatus,
+)
+from packages.core.models import (
+    Agent,
+    FinancialOperation,
+    Mandate,
+    Principal,
+    Transaction,
+)
 from packages.core.state_machine import FinancialOperationStateMachine, InvalidStateTransitionError
 from packages.shared.config import get_settings
 from services.worker.reconciliation import run_gateway_reconciliation
@@ -27,12 +40,32 @@ async def test_formal_state_machine_invalid_transitions() -> None:
     Direct illegal transitions (e.g. POLICY_REJECTED -> SUCCEEDED, SUCCEEDED -> EXECUTING)
     must strictly raise InvalidStateTransitionError.
     """
-    assert FinancialOperationStateMachine.can_transition(OperationStatus.INITIATED, OperationStatus.POLICY_APPROVED) is True
-    assert FinancialOperationStateMachine.can_transition(OperationStatus.RESERVED, OperationStatus.EXECUTING) is True
-    assert FinancialOperationStateMachine.can_transition(OperationStatus.EXECUTING, OperationStatus.SUCCEEDED) is True
+    assert (
+        FinancialOperationStateMachine.can_transition(
+            OperationStatus.INITIATED, OperationStatus.POLICY_APPROVED
+        )
+        is True
+    )
+    assert (
+        FinancialOperationStateMachine.can_transition(
+            OperationStatus.RESERVED, OperationStatus.EXECUTING
+        )
+        is True
+    )
+    assert (
+        FinancialOperationStateMachine.can_transition(
+            OperationStatus.EXECUTING, OperationStatus.SUCCEEDED
+        )
+        is True
+    )
 
     # Illegal: cannot jump directly from REJECTED to SUCCEEDED
-    assert FinancialOperationStateMachine.can_transition(OperationStatus.POLICY_REJECTED, OperationStatus.SUCCEEDED) is False
+    assert (
+        FinancialOperationStateMachine.can_transition(
+            OperationStatus.POLICY_REJECTED, OperationStatus.SUCCEEDED
+        )
+        is False
+    )
 
     with pytest.raises(InvalidStateTransitionError):
         FinancialOperationStateMachine.validate_transition(
@@ -76,7 +109,7 @@ async def test_duplicate_webhook_replay_idempotency(async_client: AsyncClient) -
             current_aggregate_spend=0,
             reserved_spend=20000,
             allowed_operations=["CREATE_ORDER"],
-            valid_until=datetime.now(timezone.utc) + timedelta(days=30),
+            valid_until=datetime.now(UTC) + timedelta(days=30),
         )
         session.add(mandate)
         await session.flush()
@@ -110,7 +143,14 @@ async def test_duplicate_webhook_replay_idempotency(async_client: AsyncClient) -
         "event": "order.paid",
         "payload": {
             "order": {"entity": {"id": "order_wh_rzp_01", "amount": 20000, "status": "paid"}},
-            "payment": {"entity": {"id": "pay_wh_rzp_01", "order_id": "order_wh_rzp_01", "amount": 20000, "status": "captured"}},
+            "payment": {
+                "entity": {
+                    "id": "pay_wh_rzp_01",
+                    "order_id": "order_wh_rzp_01",
+                    "amount": 20000,
+                    "status": "captured",
+                }
+            },
         },
     }
     raw_bytes = json.dumps(webhook_payload).encode("utf-8")
@@ -158,7 +198,9 @@ async def test_out_of_order_webhook_arrival_convergence(async_client: AsyncClien
     settings.RAZORPAY_WEBHOOK_SECRET = "test_wh_secret_p4_2"
 
     async with TestingSessionLocal() as session:
-        principal = Principal(name="Fast Gateway Corp", email="fast@mandate.dev", role=PrincipalRole.ADMIN)
+        principal = Principal(
+            name="Fast Gateway Corp", email="fast@mandate.dev", role=PrincipalRole.ADMIN
+        )
         session.add(principal)
         await session.flush()
 
@@ -175,7 +217,7 @@ async def test_out_of_order_webhook_arrival_convergence(async_client: AsyncClien
             current_aggregate_spend=0,
             reserved_spend=15000,
             allowed_operations=["CREATE_ORDER"],
-            valid_until=datetime.now(timezone.utc) + timedelta(days=30),
+            valid_until=datetime.now(UTC) + timedelta(days=30),
         )
         session.add(mandate)
         await session.flush()
@@ -210,7 +252,14 @@ async def test_out_of_order_webhook_arrival_convergence(async_client: AsyncClien
         "event_id": f"evt_ooo_{uuid.uuid4().hex[:8]}",
         "event": "payment.captured",
         "payload": {
-            "payment": {"entity": {"id": "pay_ooo_rzp_01", "order_id": "order_ooo_rzp_01", "amount": 15000, "status": "captured"}},
+            "payment": {
+                "entity": {
+                    "id": "pay_ooo_rzp_01",
+                    "order_id": "order_ooo_rzp_01",
+                    "amount": 15000,
+                    "status": "captured",
+                }
+            },
         },
     }
     raw_bytes = json.dumps(webhook_payload).encode("utf-8")
@@ -226,7 +275,11 @@ async def test_out_of_order_webhook_arrival_convergence(async_client: AsyncClien
 
     # Verify converged state
     async with TestingSessionLocal() as session:
-        refreshed_op = (await session.execute(select(FinancialOperation).where(FinancialOperation.operation_id == op_id))).scalar_one()
+        refreshed_op = (
+            await session.execute(
+                select(FinancialOperation).where(FinancialOperation.operation_id == op_id)
+            )
+        ).scalar_one()
         assert refreshed_op.status == OperationStatus.SUCCEEDED
 
         refreshed_m = await session.get(Mandate, mandate_id)
@@ -242,7 +295,9 @@ async def test_read_only_reconciliation_detects_missed_webhook() -> None:
     Reconciliation sweep must flag the discrepancy in ReconciliationReport without blindly mutating.
     """
     async with TestingSessionLocal() as session:
-        principal = Principal(name="Recon Corp", email="recon@mandate.dev", role=PrincipalRole.ADMIN)
+        principal = Principal(
+            name="Recon Corp", email="recon@mandate.dev", role=PrincipalRole.ADMIN
+        )
         session.add(principal)
         await session.flush()
 
@@ -257,7 +312,7 @@ async def test_read_only_reconciliation_detects_missed_webhook() -> None:
             max_amount_per_op=50000,
             aggregate_spend_limit=100000,
             allowed_operations=["CREATE_ORDER"],
-            valid_until=datetime.now(timezone.utc) + timedelta(days=30),
+            valid_until=datetime.now(UTC) + timedelta(days=30),
         )
         session.add(mandate)
         await session.flush()
@@ -286,7 +341,9 @@ async def test_read_only_reconciliation_detects_missed_webhook() -> None:
         await session.commit()
 
     # Run reconciliation against mock / test mode
-    report = await run_gateway_reconciliation(session_factory=TestingSessionLocal, lookback_minutes=60)
+    report = await run_gateway_reconciliation(
+        session_factory=TestingSessionLocal, lookback_minutes=60
+    )
     assert report.total_checked >= 1
     assert isinstance(report.discrepancies, list)
 
@@ -299,7 +356,9 @@ async def test_ambiguous_gateway_outcome_idempotency_resolution(async_client: As
     must return the existing operation without creating duplicate Razorpay orders or double-spending.
     """
     async with TestingSessionLocal() as session:
-        principal = Principal(name="Ambiguous Corp", email="ambig@mandate.dev", role=PrincipalRole.ADMIN)
+        principal = Principal(
+            name="Ambiguous Corp", email="ambig@mandate.dev", role=PrincipalRole.ADMIN
+        )
         session.add(principal)
         await session.flush()
 
@@ -316,7 +375,7 @@ async def test_ambiguous_gateway_outcome_idempotency_resolution(async_client: As
             current_aggregate_spend=0,
             reserved_spend=0,
             allowed_operations=["CREATE_ORDER"],
-            valid_until=datetime.now(timezone.utc) + timedelta(days=30),
+            valid_until=datetime.now(UTC) + timedelta(days=30),
         )
         session.add(mandate)
         await session.commit()

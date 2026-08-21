@@ -3,10 +3,12 @@
 import json
 import time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from packages.agents.adapter import BaseLLMAdapter, LLMToolCall, get_llm_adapter
+
+from packages.agents.adapter import BaseLLMAdapter, get_llm_adapter
 from packages.agents.prompts import SHOPPING_AGENT_SYSTEM_PROMPT, SUPPORT_AGENT_SYSTEM_PROMPT
 from packages.agents.tools import (
     PRODUCTS_CATALOG,
@@ -27,9 +29,9 @@ class AgentRunnerResult:
         self,
         reply: str,
         session_id: str,
-        tool_calls: List[Dict[str, Any]],
-        policy_decisions: List[Dict[str, Any]],
-        operation_ids: List[str],
+        tool_calls: list[dict[str, Any]],
+        policy_decisions: list[dict[str, Any]],
+        operation_ids: list[str],
         latency_ms: float,
     ) -> None:
         self.reply = reply
@@ -39,7 +41,7 @@ class AgentRunnerResult:
         self.operation_ids = operation_ids
         self.latency_ms = latency_ms
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "reply": self.reply,
             "session_id": self.session_id,
@@ -53,7 +55,7 @@ class AgentRunnerResult:
 class AgentRunner:
     """Orchestrates agent conversations, invokes LLMAdapter, and converts tool calls to Mandate operations."""
 
-    def __init__(self, db: AsyncSession, adapter: Optional[BaseLLMAdapter] = None) -> None:
+    def __init__(self, db: AsyncSession, adapter: BaseLLMAdapter | None = None) -> None:
         self.db = db
         self.adapter = adapter or get_llm_adapter()
 
@@ -62,8 +64,8 @@ class AgentRunner:
         agent: Agent,
         mandate: Mandate,
         user_prompt: str,
-        session_id: Optional[str] = None,
-        conversation_history: Optional[List[Dict[str, Any]]] = None,
+        session_id: str | None = None,
+        conversation_history: list[dict[str, Any]] | None = None,
     ) -> AgentRunnerResult:
         start_time = time.perf_counter()
         active_session = session_id or f"sess_{uuid.uuid4().hex[:12]}"
@@ -76,7 +78,7 @@ class AgentRunner:
             system_prompt = SHOPPING_AGENT_SYSTEM_PROMPT
             tools = SHOPPING_AGENT_TOOLS
 
-        messages: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+        messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
         if conversation_history:
             messages.extend(conversation_history)
         messages.append({"role": "user", "content": user_prompt})
@@ -84,13 +86,13 @@ class AgentRunner:
         # 1. First LLM Turn: Request tool choice
         llm_resp = await self.adapter.chat_completion(messages=messages, tools=tools)
 
-        executed_tool_calls: List[Dict[str, Any]] = []
-        policy_decisions: List[Dict[str, Any]] = []
-        operation_ids: List[str] = []
+        executed_tool_calls: list[dict[str, Any]] = []
+        policy_decisions: list[dict[str, Any]] = []
+        operation_ids: list[str] = []
 
         # 2. If Model invoked tools, execute them against Mandate
         if llm_resp.tool_calls:
-            assistant_msg: Dict[str, Any] = {
+            assistant_msg: dict[str, Any] = {
                 "role": "assistant",
                 "content": llm_resp.content,
                 "tool_calls": [
@@ -112,19 +114,23 @@ class AgentRunner:
                     args=tc.arguments,
                 )
 
-                executed_tool_calls.append({"name": tc.name, "arguments": tc.arguments, "result": tool_result})
+                executed_tool_calls.append(
+                    {"name": tc.name, "arguments": tc.arguments, "result": tool_result}
+                )
                 if op_id:
                     operation_ids.append(op_id)
                 if decision_data:
                     policy_decisions.append(decision_data)
 
                 # Feed tool result back to LLM context
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "name": tc.name,
-                    "content": json.dumps(tool_result),
-                })
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "name": tc.name,
+                        "content": json.dumps(tool_result),
+                    }
+                )
 
                 # Persist Execution Trace (Separate from reasoning)
                 trace = AgentExecutionTrace(
@@ -166,8 +172,8 @@ class AgentRunner:
         agent: Agent,
         mandate: Mandate,
         tool_name: str,
-        args: Dict[str, Any],
-    ) -> tuple[Dict[str, Any], Optional[str], Optional[Dict[str, Any]]]:
+        args: dict[str, Any],
+    ) -> tuple[dict[str, Any], str | None, dict[str, Any] | None]:
         """Routes agent tool call to Mandate's operations pipeline."""
         from apps.api.routes.operations import request_financial_operation
 
@@ -177,23 +183,29 @@ class AgentRunner:
 
         if tool_name == "lookup_transaction":
             from packages.core.models import FinancialOperation
+
             op_id = args.get("operation_id", "")
             stmt = select(FinancialOperation).where(FinancialOperation.operation_id == op_id)
             res = await self.db.execute(stmt)
             op = res.scalar_one_or_none()
             if not op:
                 return {"error": f"Operation '{op_id}' not found"}, None, None
-            return {
-                "operation_id": op.operation_id,
-                "status": op.status.value,
-                "amount_inr": f"Rs. {op.amount / 100:,.2f}",
-                "operation_type": op.operation_type.value,
-                "created_at": op.created_at.isoformat(),
-            }, op.operation_id, None
+            return (
+                {
+                    "operation_id": op.operation_id,
+                    "status": op.status.value,
+                    "amount_inr": f"Rs. {op.amount / 100:,.2f}",
+                    "operation_type": op.operation_type.value,
+                    "created_at": op.created_at.isoformat(),
+                },
+                op.operation_id,
+                None,
+            )
 
         # Financial Operations -> Routed strictly through Mandate Policy Gate
         if tool_name == "create_purchase_order":
-            product_id = args.get("product_id")
+            product_id_raw = args.get("product_id")
+            product_id = str(product_id_raw) if product_id_raw is not None else ""
             quantity = max(1, int(args.get("quantity", 1)))
             product = PRODUCTS_CATALOG.get(product_id)
 
@@ -217,16 +229,24 @@ class AgentRunner:
                 },
             )
             op = await request_financial_operation(payload=op_req, db=self.db)
-            decision = op.policy_evaluation_details.get("decision", "DENY")
+            decision = (
+                op.policy_evaluation_details.get("decision", "DENY")
+                if op.policy_evaluation_details
+                else "DENY"
+            )
 
-            return {
-                "operation_id": op.operation_id,
-                "status": op.status.value,
-                "policy_decision": decision,
-                "amount_inr": f"Rs. {op.amount / 100:,.2f}",
-                "error_message": op.error_message,
-                "product": product["name"],
-            }, op.operation_id, op.policy_evaluation_details
+            return (
+                {
+                    "operation_id": op.operation_id,
+                    "status": op.status.value,
+                    "policy_decision": decision,
+                    "amount_inr": f"Rs. {op.amount / 100:,.2f}",
+                    "error_message": op.error_message,
+                    "product": product["name"],
+                },
+                op.operation_id,
+                op.policy_evaluation_details,
+            )
 
         if tool_name == "create_payment_link_for_customer":
             amount_inr = float(args.get("amount_in_rupees", 0))
@@ -246,20 +266,28 @@ class AgentRunner:
                 },
             )
             op = await request_financial_operation(payload=op_req, db=self.db)
-            decision = op.policy_evaluation_details.get("decision", "DENY")
+            decision = (
+                op.policy_evaluation_details.get("decision", "DENY")
+                if op.policy_evaluation_details
+                else "DENY"
+            )
 
-            return {
-                "operation_id": op.operation_id,
-                "status": op.status.value,
-                "policy_decision": decision,
-                "amount_inr": f"Rs. {op.amount / 100:,.2f}",
-                "error_message": op.error_message,
-            }, op.operation_id, op.policy_evaluation_details
+            return (
+                {
+                    "operation_id": op.operation_id,
+                    "status": op.status.value,
+                    "policy_decision": decision,
+                    "amount_inr": f"Rs. {op.amount / 100:,.2f}",
+                    "error_message": op.error_message,
+                },
+                op.operation_id,
+                op.policy_evaluation_details,
+            )
 
         if tool_name == "issue_customer_refund":
-            payment_id = args.get("payment_id", "")
-            amount_inr = args.get("amount_in_rupees")
-            amount_paise = int(float(amount_inr) * 100) if amount_inr else 50000
+            payment_id = str(args.get("payment_id", ""))
+            amount_inr_raw = args.get("amount_in_rupees")
+            amount_paise = int(float(amount_inr_raw) * 100) if amount_inr_raw is not None else 50000
 
             op_req = OperationCreate(
                 idempotency_key=f"idemp_rfnd_{uuid.uuid4().hex}",
@@ -268,18 +296,29 @@ class AgentRunner:
                 operation_type=OperationType.CREATE_REFUND,
                 amount=amount_paise,
                 currency="INR",
-                payload={"payment_id": payment_id, "reason": args.get("reason", "Customer requested refund")},
+                payload={
+                    "payment_id": payment_id,
+                    "reason": args.get("reason", "Customer requested refund"),
+                },
             )
             op = await request_financial_operation(payload=op_req, db=self.db)
-            decision = op.policy_evaluation_details.get("decision", "DENY")
+            decision = (
+                op.policy_evaluation_details.get("decision", "DENY")
+                if op.policy_evaluation_details
+                else "DENY"
+            )
 
-            return {
-                "operation_id": op.operation_id,
-                "status": op.status.value,
-                "policy_decision": decision,
-                "amount_inr": f"Rs. {op.amount / 100:,.2f}",
-                "payment_id": payment_id,
-                "error_message": op.error_message,
-            }, op.operation_id, op.policy_evaluation_details
+            return (
+                {
+                    "operation_id": op.operation_id,
+                    "status": op.status.value,
+                    "policy_decision": decision,
+                    "amount_inr": f"Rs. {op.amount / 100:,.2f}",
+                    "payment_id": payment_id,
+                    "error_message": op.error_message,
+                },
+                op.operation_id,
+                op.policy_evaluation_details,
+            )
 
         return {"error": f"Unauthorized tool invocation '{tool_name}'"}, None, None

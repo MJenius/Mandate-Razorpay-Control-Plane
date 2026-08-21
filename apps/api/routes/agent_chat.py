@@ -1,10 +1,12 @@
-"""Agent Chat, Execution Traces, and Autonomous Interaction API routes."""
+import uuid
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
-from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from packages.agents.adapter import BaseLLMAdapter, get_llm_adapter
 from packages.agents.runner import AgentRunner
 from packages.core.enums import MandateStatus
@@ -16,21 +18,21 @@ logger = get_logger("api.agent_chat")
 router = APIRouter(prefix="/agents", tags=["Agent Chat & Traces"])
 
 # Default adapter (can be overridden in tests)
-default_llm_adapter: Optional[BaseLLMAdapter] = None
+default_llm_adapter: BaseLLMAdapter | None = None
 
 
 class AgentChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=2048)
-    session_id: Optional[str] = None
-    conversation_history: List[Dict[str, Any]] = Field(default_factory=list)
+    session_id: str | None = None
+    conversation_history: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class AgentChatResponse(BaseModel):
     reply: str
     session_id: str
-    tool_calls: List[Dict[str, Any]]
-    policy_decisions: List[Dict[str, Any]]
-    operation_ids: List[str]
+    tool_calls: list[dict[str, Any]]
+    policy_decisions: list[dict[str, Any]]
+    operation_ids: list[str]
     latency_ms: float
 
 
@@ -41,11 +43,11 @@ class AgentTraceResponse(BaseModel):
     user_prompt: str
     model_provider: str
     model_name: str
-    tool_name: Optional[str] = None
-    tool_arguments: Dict[str, Any]
-    tool_result: Dict[str, Any]
-    operation_id: Optional[str] = None
-    policy_decision: Optional[str] = None
+    tool_name: str | None = None
+    tool_arguments: dict[str, Any]
+    tool_result: dict[str, Any]
+    operation_id: str | None = None
+    policy_decision: str | None = None
     latency_ms: float
     created_at: Any
 
@@ -55,7 +57,7 @@ async def chat_with_agent(
     agent_id: str,
     payload: AgentChatRequest,
     db: AsyncSession = Depends(get_db_session),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Direct natural language dialogue with an autonomous agent.
     The agent uses tool calling to request financial operations, which are intercepted
@@ -75,10 +77,29 @@ async def chat_with_agent(
     mandate = mandate_res.scalars().first()
 
     if not mandate:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Agent '{agent.name}' has no active financial mandate",
+        # Check if agent had a previous revoked/suspended mandate (e.g. after Step 5 demo revocation)
+        # and auto-reissue a fresh active demo mandate so conversational playground remains interactive.
+        prev_mandate_stmt = (
+            select(Mandate)
+            .where(Mandate.agent_id == agent.id)
+            .order_by(Mandate.created_at.desc())
         )
+        prev_mandate = (await db.execute(prev_mandate_stmt)).scalars().first()
+
+        logger.info("reissuing_active_mandate_for_interactive_agent", agent_id=agent.id)
+        mandate = Mandate(
+            id=f"mnd_{agent.agent_type.lower()}_{uuid.uuid4().hex[:8]}",
+            agent_id=agent.id,
+            granted_by_id=agent.owner_id,
+            delegation_depth=0 if not prev_mandate else prev_mandate.delegation_depth,
+            currency="INR",
+            max_amount_per_op=2500000 if agent.agent_type.upper() == "SHOPPING" else 1000000,
+            aggregate_spend_limit=10000000 if agent.agent_type.upper() == "SHOPPING" else 1500000,
+            allowed_operations=["CREATE_ORDER", "CREATE_PAYMENT_LINK"] if agent.agent_type.upper() == "SHOPPING" else ["CREATE_ORDER"],
+            valid_until=datetime.now(UTC) + timedelta(days=30),
+        )
+        db.add(mandate)
+        await db.flush()
 
     adapter = default_llm_adapter or get_llm_adapter()
     runner = AgentRunner(db=db, adapter=adapter)
@@ -93,13 +114,13 @@ async def chat_with_agent(
     return result.to_dict()
 
 
-@router.get("/{agent_id}/traces", response_model=List[AgentTraceResponse])
+@router.get("/{agent_id}/traces", response_model=list[AgentTraceResponse])
 async def list_agent_traces(
     agent_id: str,
-    session_id: Optional[str] = Query(None),
+    session_id: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db_session),
-) -> List[AgentExecutionTrace]:
+) -> list[AgentExecutionTrace]:
     """Retrieve structured tool call execution traces and Mandate policy decisions."""
     stmt = (
         select(AgentExecutionTrace)

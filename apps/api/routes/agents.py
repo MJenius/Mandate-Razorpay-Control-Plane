@@ -2,10 +2,11 @@
 
 import hashlib
 import uuid
-from typing import List
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from packages.core.enums import AgentStatus, AuditAction
 from packages.core.models import Agent, AuditEvent, Principal
 from packages.core.schemas import AgentCreate, AgentResponse, AgentStatusUpdate
@@ -16,10 +17,10 @@ logger = get_logger("api.agents")
 router = APIRouter(prefix="/agents", tags=["Agents"])
 
 
-@router.get("", response_model=List[AgentResponse])
+@router.get("", response_model=list[AgentResponse])
 async def list_agents(
     db: AsyncSession = Depends(get_db_session),
-) -> List[Agent]:
+) -> list[Agent]:
     """Retrieve all registered AI agents."""
     stmt = select(Agent).order_by(Agent.created_at.desc())
     result = await db.execute(stmt)

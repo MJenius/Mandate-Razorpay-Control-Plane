@@ -2,18 +2,22 @@
 
 import uuid
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
-from typing import Any, Callable, Coroutine, Dict, List, Optional
+from collections.abc import Callable, Coroutine
+from datetime import UTC, datetime
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
+
 from packages.core.enums import AuditAction
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class BaseEvent(BaseModel):
     """Base schema for domain & audit events."""
+
     model_config = ConfigDict(from_attributes=True)
 
     event_id: str = Field(default_factory=lambda: f"evt_{uuid.uuid4().hex[:16]}")
@@ -23,6 +27,7 @@ class BaseEvent(BaseModel):
 
 class FinancialOperationEvent(BaseEvent):
     """Event emitted when a financial operation undergoes a lifecycle change."""
+
     operation_id: str
     idempotency_key: str
     agent_id: str
@@ -31,19 +36,20 @@ class FinancialOperationEvent(BaseEvent):
     status: str
     amount: int
     currency: str
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class AuditLogEvent(BaseEvent):
     """Immutable audit trail event."""
+
     action: AuditAction
     actor_id: str
     actor_type: str
     resource_id: str
     resource_type: str
-    payload: Dict[str, Any] = Field(default_factory=dict)
-    previous_state: Optional[Dict[str, Any]] = None
-    new_state: Optional[Dict[str, Any]] = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    previous_state: dict[str, Any] | None = None
+    new_state: dict[str, Any] | None = None
 
 
 EventHandler = Callable[[BaseEvent], Coroutine[Any, Any, None]]
@@ -65,8 +71,8 @@ class InMemoryEventBus(EventBus):
     """In-memory event bus implementation for Phase 0 and unit tests."""
 
     def __init__(self) -> None:
-        self._handlers: Dict[str, List[EventHandler]] = {}
-        self.published_events: List[BaseEvent] = []
+        self._handlers: dict[str, list[EventHandler]] = {}
+        self.published_events: list[BaseEvent] = []
 
     async def publish(self, topic: str, event: BaseEvent) -> None:
         self.published_events.append(event)

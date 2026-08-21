@@ -1,10 +1,12 @@
 """Financial Operations API routes with deterministic policy engine, two-phase budget reservation, and atomic concurrency safety."""
 
 import uuid
-from typing import Any, Dict, List
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from packages.core.enums import (
     AuditAction,
     OperationStatus,
@@ -18,8 +20,6 @@ from packages.core.schemas import (
     OperationCreate,
     OperationResponse,
     PaymentVerifyRequest,
-    RefundCreateRequest,
-    TransactionResponse,
 )
 from packages.policy.engine import PolicyEngine
 from packages.razorpay.client import (
@@ -38,10 +38,10 @@ policy_engine = PolicyEngine()
 razorpay_client = RazorpayClient()
 
 
-@router.get("", response_model=List[OperationResponse])
+@router.get("", response_model=list[OperationResponse])
 async def list_operations(
     db: AsyncSession = Depends(get_db_session),
-) -> List[FinancialOperation]:
+) -> list[FinancialOperation]:
     """Retrieve financial operations."""
     stmt = select(FinancialOperation).order_by(FinancialOperation.created_at.desc())
     result = await db.execute(stmt)
@@ -128,7 +128,9 @@ async def request_financial_operation(
         payload={
             "amount": operation.amount,
             "decision": policy_result.decision.value,
-            "reasons": policy_result.rejection_reasons if not policy_result.approved else policy_result.review_reasons,
+            "reasons": policy_result.rejection_reasons
+            if not policy_result.approved
+            else policy_result.review_reasons,
         },
         new_state={"status": operation.status.value},
     )
@@ -155,7 +157,8 @@ async def request_financial_operation(
         update(Mandate)
         .where(
             Mandate.id == mandate.id,
-            (Mandate.current_aggregate_spend + Mandate.reserved_spend + payload.amount) <= Mandate.aggregate_spend_limit,
+            (Mandate.current_aggregate_spend + Mandate.reserved_spend + payload.amount)
+            <= Mandate.aggregate_spend_limit,
         )
         .values(
             reserved_spend=Mandate.reserved_spend + payload.amount,
@@ -163,14 +166,18 @@ async def request_financial_operation(
         )
     )
     reserve_result = await db.execute(reserve_stmt)
+    affected_rows = getattr(reserve_result, "rowcount", -1)
 
-    if reserve_result.rowcount == 0:
+    if affected_rows == 0:
         # Concurrent race condition caught: budget was exhausted by another concurrent thread
         operation.status = OperationStatus.POLICY_REJECTED
-        operation.error_message = "Mandate aggregate budget limit exhausted during concurrent reservation"
+        operation.error_message = (
+            "Mandate aggregate budget limit exhausted during concurrent reservation"
+        )
+        err_msg = operation.error_message or "Budget exhausted"
         policy_result.decision = PolicyDecisionType.DENY
         policy_result.approved = False
-        policy_result.rejection_reasons.append(operation.error_message)
+        policy_result.rejection_reasons.append(err_msg)
         operation.policy_evaluation_details = policy_result.model_dump()
         await db.commit()
         await db.refresh(operation)
@@ -200,7 +207,7 @@ async def _execute_gateway_operation(
     db: AsyncSession,
     mandate: Mandate,
     operation: FinancialOperation,
-    payload: Dict[str, Any],
+    payload: dict[str, Any],
 ) -> None:
     """Executes Razorpay API and handles two-phase budget commit or failure release."""
     try:
@@ -269,12 +276,14 @@ async def _execute_gateway_operation(
                 gateway_refund_id=rzp_refund.id,
                 amount=rzp_refund.amount,
                 currency=rzp_refund.currency,
-                status=TransactionStatus.REFUNDED if rzp_refund.status == "processed" else TransactionStatus.CREATED,
+                status=TransactionStatus.REFUNDED
+                if rzp_refund.status == "processed"
+                else TransactionStatus.CREATED,
                 gateway_response=rzp_refund.model_dump(),
             )
             db.add(tx)
             operation.status = OperationStatus.SUCCEEDED
-            
+
             # Atomic commit of refund/spend
             await db.execute(
                 update(Mandate)
@@ -362,7 +371,8 @@ async def human_approve_operation(
         update(Mandate)
         .where(
             Mandate.id == mandate.id,
-            (Mandate.current_aggregate_spend + Mandate.reserved_spend + operation.amount) <= Mandate.aggregate_spend_limit,
+            (Mandate.current_aggregate_spend + Mandate.reserved_spend + operation.amount)
+            <= Mandate.aggregate_spend_limit,
         )
         .values(
             reserved_spend=Mandate.reserved_spend + operation.amount,
@@ -370,7 +380,8 @@ async def human_approve_operation(
         )
     )
     reserve_result = await db.execute(reserve_stmt)
-    if reserve_result.rowcount == 0:
+    affected_rows = getattr(reserve_result, "rowcount", -1)
+    if affected_rows == 0:
         operation.status = OperationStatus.POLICY_REJECTED
         operation.error_message = "Budget limit exhausted before approval could reserve funds"
         await db.commit()
@@ -397,18 +408,20 @@ async def human_approve_operation(
     return operation
 
 
-@router.post("/{operation_id}/verify-payment", response_model=Dict[str, Any])
+@router.post("/{operation_id}/verify-payment", response_model=dict[str, Any])
 async def verify_payment(
     operation_id: str,
     payload: PaymentVerifyRequest,
     db: AsyncSession = Depends(get_db_session),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Verifies Razorpay payment signature, commits budget from reserved -> committed, and updates ledger."""
     stmt = select(FinancialOperation).where(FinancialOperation.operation_id == operation_id)
     res = await db.execute(stmt)
     operation = res.scalar_one_or_none()
     if not operation:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Financial operation not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Financial operation not found"
+        )
 
     is_valid = razorpay_client.verify_payment_signature(
         razorpay_order_id=payload.razorpay_order_id,
@@ -417,7 +430,9 @@ async def verify_payment(
     )
 
     if not is_valid:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Razorpay signature")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Razorpay signature"
+        )
 
     # Atomic transition budget: reserved -> committed
     await db.execute(

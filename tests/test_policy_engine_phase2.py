@@ -2,10 +2,12 @@
 
 import asyncio
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from httpx import AsyncClient
-from packages.core.enums import AgentStatus, MandateStatus, OperationType, PrincipalRole
+
+from packages.core.enums import AgentStatus, MandateStatus, PrincipalRole
 from packages.core.models import Agent, Mandate, Principal
 from tests.conftest import TestingSessionLocal
 
@@ -31,7 +33,7 @@ async def test_policy_engine_allow_and_budget_reservation(async_client: AsyncCli
             current_aggregate_spend=0,
             reserved_spend=0,
             allowed_operations=["CREATE_ORDER"],
-            valid_until=datetime.now(timezone.utc) + timedelta(days=30),
+            valid_until=datetime.now(UTC) + timedelta(days=30),
         )
         session.add(mandate)
         await session.commit()
@@ -65,11 +67,18 @@ async def test_policy_engine_allow_and_budget_reservation(async_client: AsyncCli
 async def test_policy_engine_rejection_suspended_agent(async_client: AsyncClient) -> None:
     """Verifies that operations from a SUSPENDED agent produce DENY with zero gateway call."""
     async with TestingSessionLocal() as session:
-        principal = Principal(name="Suspended Corp", email="suspend@mandate.dev", role=PrincipalRole.ADMIN)
+        principal = Principal(
+            name="Suspended Corp", email="suspend@mandate.dev", role=PrincipalRole.ADMIN
+        )
         session.add(principal)
         await session.flush()
 
-        agent = Agent(name="RogueBot", owner_id=principal.id, status=AgentStatus.SUSPENDED, api_key_hash="hash_p2_2")
+        agent = Agent(
+            name="RogueBot",
+            owner_id=principal.id,
+            status=AgentStatus.SUSPENDED,
+            api_key_hash="hash_p2_2",
+        )
         session.add(agent)
         await session.flush()
 
@@ -80,7 +89,7 @@ async def test_policy_engine_rejection_suspended_agent(async_client: AsyncClient
             max_amount_per_op=50000,
             aggregate_spend_limit=100000,
             allowed_operations=["CREATE_ORDER"],
-            valid_until=datetime.now(timezone.utc) + timedelta(days=30),
+            valid_until=datetime.now(UTC) + timedelta(days=30),
         )
         session.add(mandate)
         await session.commit()
@@ -101,14 +110,18 @@ async def test_policy_engine_rejection_suspended_agent(async_client: AsyncClient
     data = res.json()
     assert data["status"] == "POLICY_REJECTED"
     assert data["policy_evaluation_details"]["decision"] == "DENY"
-    assert any("must be ACTIVE" in r for r in data["policy_evaluation_details"]["rejection_reasons"])
+    assert any(
+        "must be ACTIVE" in r for r in data["policy_evaluation_details"]["rejection_reasons"]
+    )
 
 
 @pytest.mark.asyncio
 async def test_policy_engine_rejection_revoked_mandate(async_client: AsyncClient) -> None:
     """Verifies that revoked mandates immediately reject all operation intents."""
     async with TestingSessionLocal() as session:
-        principal = Principal(name="Revoke Corp", email="revoke@mandate.dev", role=PrincipalRole.ADMIN)
+        principal = Principal(
+            name="Revoke Corp", email="revoke@mandate.dev", role=PrincipalRole.ADMIN
+        )
         session.add(principal)
         await session.flush()
 
@@ -124,7 +137,7 @@ async def test_policy_engine_rejection_revoked_mandate(async_client: AsyncClient
             max_amount_per_op=50000,
             aggregate_spend_limit=100000,
             allowed_operations=["CREATE_ORDER"],
-            valid_until=datetime.now(timezone.utc) + timedelta(days=30),
+            valid_until=datetime.now(UTC) + timedelta(days=30),
         )
         session.add(mandate)
         await session.commit()
@@ -151,7 +164,9 @@ async def test_policy_engine_rejection_revoked_mandate(async_client: AsyncClient
 async def test_policy_engine_human_review_threshold_flow(async_client: AsyncClient) -> None:
     """Verifies that amounts exceeding review threshold trigger REQUIRE_HUMAN_REVIEW until approved."""
     async with TestingSessionLocal() as session:
-        principal = Principal(name="Review Corp", email="review@mandate.dev", role=PrincipalRole.ADMIN)
+        principal = Principal(
+            name="Review Corp", email="review@mandate.dev", role=PrincipalRole.ADMIN
+        )
         session.add(principal)
         await session.flush()
 
@@ -167,7 +182,7 @@ async def test_policy_engine_human_review_threshold_flow(async_client: AsyncClie
             aggregate_spend_limit=500000,
             review_threshold_amount=25000,  # Requires human review for >= 25k
             allowed_operations=["CREATE_ORDER"],
-            valid_until=datetime.now(timezone.utc) + timedelta(days=30),
+            valid_until=datetime.now(UTC) + timedelta(days=30),
         )
         session.add(mandate)
         await session.commit()
@@ -211,7 +226,9 @@ async def test_concurrent_spend_exhaustion_safety(async_client: AsyncClient) -> 
     Exactly 2 must be ALLOWED, and 4 must be DENIED (overspending strictly prevented).
     """
     async with TestingSessionLocal() as session:
-        principal = Principal(name="Parallel Corp", email="parallel@mandate.dev", role=PrincipalRole.ADMIN)
+        principal = Principal(
+            name="Parallel Corp", email="parallel@mandate.dev", role=PrincipalRole.ADMIN
+        )
         session.add(principal)
         await session.flush()
 
@@ -228,7 +245,7 @@ async def test_concurrent_spend_exhaustion_safety(async_client: AsyncClient) -> 
             current_aggregate_spend=0,
             reserved_spend=0,
             allowed_operations=["CREATE_ORDER"],
-            valid_until=datetime.now(timezone.utc) + timedelta(days=30),
+            valid_until=datetime.now(UTC) + timedelta(days=30),
         )
         session.add(mandate)
         await session.commit()

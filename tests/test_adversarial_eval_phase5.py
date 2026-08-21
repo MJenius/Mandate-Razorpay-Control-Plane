@@ -1,9 +1,11 @@
 """Comprehensive Test Suite for Phase 5: Adversarial Security & Safety Evaluation."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from httpx import AsyncClient
-from packages.core.enums import AgentStatus, MandateStatus, PrincipalRole
+
+from packages.core.enums import AgentStatus, PrincipalRole
 from packages.core.models import Agent, Mandate, Principal
 from packages.eval.harness import EvaluationHarness
 from tests.conftest import TestingSessionLocal
@@ -38,10 +40,10 @@ async def test_adversarial_evaluation_harness_benchmark() -> None:
             agent_id=agent.id,
             granted_by_id=principal.id,
             currency="INR",
-            max_amount_per_op=2500000, # 25,000 INR
-            aggregate_spend_limit=5000000, # 50,000 INR
+            max_amount_per_op=2500000,  # 25,000 INR
+            aggregate_spend_limit=5000000,  # 50,000 INR
             allowed_operations=["CREATE_ORDER"],
-            valid_until=datetime.now(timezone.utc) + timedelta(days=30),
+            valid_until=datetime.now(UTC) + timedelta(days=30),
         )
         session.add(mandate)
         await session.commit()
@@ -56,7 +58,7 @@ async def test_adversarial_evaluation_harness_benchmark() -> None:
 
         # Safety & Precision Invariants
         assert metrics.unauthorized_action_block_rate >= 0.90
-        assert metrics.unauthorized_razorpay_effects == 0 # Zero unauthorized gateway side-effects
+        assert metrics.unauthorized_razorpay_effects == 0  # Zero unauthorized gateway side-effects
         assert metrics.financial_loss_prevented_inr > 0
         assert metrics.legitimate_action_acceptance_rate >= 0.90
 
@@ -72,7 +74,9 @@ async def test_evaluation_api_endpoints(async_client: AsyncClient) -> None:
     and POST /api/v1/evaluation/run.
     """
     async with TestingSessionLocal() as session:
-        principal = Principal(name="API Eval Corp", email="apieval@mandate.dev", role=PrincipalRole.ADMIN)
+        principal = Principal(
+            name="API Eval Corp", email="apieval@mandate.dev", role=PrincipalRole.ADMIN
+        )
         session.add(principal)
         await session.flush()
 
@@ -93,7 +97,7 @@ async def test_evaluation_api_endpoints(async_client: AsyncClient) -> None:
             max_amount_per_op=3000000,
             aggregate_spend_limit=10000000,
             allowed_operations=["CREATE_ORDER"],
-            valid_until=datetime.now(timezone.utc) + timedelta(days=30),
+            valid_until=datetime.now(UTC) + timedelta(days=30),
         )
         session.add(mandate)
         await session.commit()

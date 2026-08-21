@@ -1,14 +1,14 @@
 """Telemetry, System Health, and Failure Injection Control API routes."""
 
-import asyncio
-import uuid
-from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from typing import Any
+
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from packages.core.enums import OperationStatus
-from packages.core.models import AuditEvent, FinancialOperation, ReconciliationReport, WebhookEvent
+from packages.core.models import FinancialOperation, ReconciliationReport, WebhookEvent
 from packages.shared.database import get_db_session
 from packages.shared.logging import get_logger
 from services.worker.reconciliation import run_gateway_reconciliation
@@ -33,30 +33,36 @@ class FailureInjectionRequest(BaseModel):
         ...,
         description="Type of failure to simulate: 'DUPLICATE_WEBHOOK', 'OUT_OF_ORDER_WEBHOOK', 'AMBIGUOUS_GATEWAY_TIMEOUT', 'PROCESS_CRASH_RESERVATION'",
     )
-    operation_id: Optional[str] = None
-    parameters: Dict[str, Any] = Field(default_factory=dict)
+    operation_id: str | None = None
+    parameters: dict[str, Any] = Field(default_factory=dict)
 
 
 @router.get("/metrics", response_model=SystemMetricsResponse)
 async def get_system_metrics(
     db: AsyncSession = Depends(get_db_session),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Provides real-time reliability and event-processing metrics."""
     # Total ops
     total_ops = (await db.execute(select(func.count(FinancialOperation.id)))).scalar() or 0
     succeeded_ops = (
         await db.execute(
-            select(func.count(FinancialOperation.id)).where(FinancialOperation.status == OperationStatus.SUCCEEDED)
+            select(func.count(FinancialOperation.id)).where(
+                FinancialOperation.status == OperationStatus.SUCCEEDED
+            )
         )
     ).scalar() or 0
     failed_ops = (
         await db.execute(
-            select(func.count(FinancialOperation.id)).where(FinancialOperation.status == OperationStatus.FAILED)
+            select(func.count(FinancialOperation.id)).where(
+                FinancialOperation.status == OperationStatus.FAILED
+            )
         )
     ).scalar() or 0
     active_reservations = (
         await db.execute(
-            select(func.count(FinancialOperation.id)).where(FinancialOperation.status == OperationStatus.RESERVED)
+            select(func.count(FinancialOperation.id)).where(
+                FinancialOperation.status == OperationStatus.RESERVED
+            )
         )
     ).scalar() or 0
 
@@ -74,7 +80,9 @@ async def get_system_metrics(
 
     # Reconciliation
     rec_count = (await db.execute(select(func.count(ReconciliationReport.id)))).scalar() or 0
-    latest_rec_stmt = select(ReconciliationReport).order_by(ReconciliationReport.created_at.desc()).limit(1)
+    latest_rec_stmt = (
+        select(ReconciliationReport).order_by(ReconciliationReport.created_at.desc()).limit(1)
+    )
     latest_rec = (await db.execute(latest_rec_stmt)).scalar_one_or_none()
     latest_discrepancies = latest_rec.inconsistencies_detected if latest_rec else 0
 
@@ -93,7 +101,7 @@ async def get_system_metrics(
 @router.post("/reconcile-now")
 async def trigger_reconciliation(
     db: AsyncSession = Depends(get_db_session),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Manually triggers an immediate gateway reconciliation sweep."""
     res = await run_gateway_reconciliation(session_factory=None)
     return res.to_dict()
@@ -103,7 +111,7 @@ async def trigger_reconciliation(
 async def inject_simulated_failure(
     payload: FailureInjectionRequest,
     db: AsyncSession = Depends(get_db_session),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Failure Injection Control Plane:
     Allows test/demo harness to deliberately inject:
