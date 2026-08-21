@@ -12,8 +12,6 @@ from packages.shared.logging import get_logger
 
 logger = get_logger("razorpay.client")
 
-RAZORPAY_BASE_URL = "https://api.razorpay.com/v1"
-
 
 class RazorpayOrderRequest(BaseModel):
     amount: int = Field(..., gt=0, description="Amount in paise")
@@ -89,17 +87,19 @@ class RazorpayPaymentLinkResponse(BaseModel):
 
 
 class RazorpayClient:
-    """Production-grade typed abstraction over Razorpay REST API with dual live & mock support."""
+    """Production-grade typed abstraction over Razorpay REST API with configurable base URL and dual live/mock support."""
 
     def __init__(
         self,
         key_id: Optional[str] = None,
         key_secret: Optional[str] = None,
+        base_url: Optional[str] = None,
         mock_mode: Optional[bool] = None,
     ) -> None:
         settings = get_settings()
         self.key_id = key_id or settings.RAZORPAY_KEY_ID
         self.key_secret = key_secret or settings.RAZORPAY_KEY_SECRET
+        self.base_url = (base_url or settings.RAZORPAY_BASE_URL).rstrip("/")
         self.mock_mode = mock_mode if mock_mode is not None else settings.RAZORPAY_MOCK_MODE
         self.webhook_secret = settings.RAZORPAY_WEBHOOK_SECRET
 
@@ -141,7 +141,7 @@ class RazorpayClient:
 
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
-                f"{RAZORPAY_BASE_URL}/orders",
+                f"{self.base_url}/orders",
                 json=payload,
                 headers=self._auth_header,
             )
@@ -166,7 +166,7 @@ class RazorpayClient:
 
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(
-                f"{RAZORPAY_BASE_URL}/orders/{order_id}",
+                f"{self.base_url}/orders/{order_id}",
                 headers=self._auth_header,
             )
             resp.raise_for_status()
@@ -191,7 +191,7 @@ class RazorpayClient:
 
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(
-                f"{RAZORPAY_BASE_URL}/payments/{payment_id}",
+                f"{self.base_url}/payments/{payment_id}",
                 headers=self._auth_header,
             )
             resp.raise_for_status()
@@ -213,7 +213,7 @@ class RazorpayClient:
 
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
-                f"{RAZORPAY_BASE_URL}/payments/{payment_id}/capture",
+                f"{self.base_url}/payments/{payment_id}/capture",
                 json={"amount": amount, "currency": currency},
                 headers=self._auth_header,
             )
@@ -248,7 +248,7 @@ class RazorpayClient:
 
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
-                f"{RAZORPAY_BASE_URL}/payments/{req.payment_id}/refund",
+                f"{self.base_url}/payments/{req.payment_id}/refund",
                 json=payload,
                 headers=self._auth_header,
             )
@@ -272,7 +272,7 @@ class RazorpayClient:
 
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(
-                f"{RAZORPAY_BASE_URL}/refunds/{refund_id}",
+                f"{self.base_url}/refunds/{refund_id}",
                 headers=self._auth_header,
             )
             resp.raise_for_status()
@@ -312,7 +312,7 @@ class RazorpayClient:
 
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
-                f"{RAZORPAY_BASE_URL}/payment_links",
+                f"{self.base_url}/payment_links",
                 json=payload,
                 headers=self._auth_header,
             )
@@ -345,7 +345,7 @@ class RazorpayClient:
 
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(
-                f"{RAZORPAY_BASE_URL}/payment_links/{link_id}",
+                f"{self.base_url}/payment_links/{link_id}",
                 headers=self._auth_header,
             )
             resp.raise_for_status()
@@ -377,7 +377,7 @@ class RazorpayClient:
 
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
-                f"{RAZORPAY_BASE_URL}/payment_links/{link_id}/cancel",
+                f"{self.base_url}/payment_links/{link_id}/cancel",
                 headers=self._auth_header,
             )
             resp.raise_for_status()
@@ -422,7 +422,10 @@ class RazorpayClient:
         signature: str,
         secret: Optional[str] = None,
     ) -> bool:
-        """Verifies SHA256 HMAC signature sent in X-Razorpay-Signature header."""
+        """
+        Verifies SHA256 HMAC signature sent in X-Razorpay-Signature header against the raw body bytes.
+        Uses RAZORPAY_WEBHOOK_SECRET specifically.
+        """
         active_secret = secret or self.webhook_secret
         if not active_secret or not signature:
             return False

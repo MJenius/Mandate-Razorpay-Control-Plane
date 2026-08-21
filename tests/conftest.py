@@ -4,6 +4,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from apps.api.main import app
 from packages.core.models import Base
+from packages.shared.config import get_settings
 from packages.shared.database import get_db_session
 
 # Test Database Engine using SQLite in-memory async
@@ -21,6 +22,10 @@ TestingSessionLocal = async_sessionmaker(
 
 @pytest_asyncio.fixture(scope="function", autouse=True)
 async def setup_test_db():
+    # Force mock mode in test client calls to prevent external network failures on fake IDs
+    from apps.api.routes import operations
+    operations.razorpay_client.mock_mode = True
+
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield

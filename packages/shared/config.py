@@ -30,11 +30,12 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
 
-    # Razorpay (Test Mode credentials default for mock safety)
-    RAZORPAY_KEY_ID: str = Field(default="rzp_test_placeholder", description="Razorpay Test Key ID")
-    RAZORPAY_KEY_SECRET: str = Field(default="placeholder_secret", description="Razorpay Test Secret")
-    RAZORPAY_WEBHOOK_SECRET: str = Field(default="webhook_placeholder_secret", description="Razorpay Webhook Secret")
-    RAZORPAY_MOCK_MODE: bool = Field(default=True, description="When True, allows test runs without live API calls")
+    # Razorpay Test Mode & Live API configuration
+    RAZORPAY_KEY_ID: str = Field(default="", description="Razorpay Key ID")
+    RAZORPAY_KEY_SECRET: str = Field(default="", description="Razorpay Key Secret")
+    RAZORPAY_WEBHOOK_SECRET: str = Field(default="", description="Razorpay Webhook Secret")
+    RAZORPAY_BASE_URL: str = Field(default="https://api.razorpay.com/v1", description="Razorpay API Base URL")
+    RAZORPAY_MOCK_MODE: bool = Field(default=False, description="When True, uses mock responses without live API calls")
 
     @property
     def cors_origins(self) -> List[str]:
