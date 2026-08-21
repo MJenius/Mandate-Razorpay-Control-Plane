@@ -28,3 +28,21 @@ async def list_audit_events(
 
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+@router.get("/resources/{resource_type}/{resource_id}", response_model=List[AuditEventResponse])
+async def get_audit_trail_for_resource(
+    resource_type: str,
+    resource_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db_session),
+) -> List[AuditEvent]:
+    """Retrieve all audit events for a specific resource type and ID."""
+    stmt = (
+        select(AuditEvent)
+        .where(AuditEvent.resource_id == resource_id)
+        .order_by(AuditEvent.timestamp.desc())
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().all())

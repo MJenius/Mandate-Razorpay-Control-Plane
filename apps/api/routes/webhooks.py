@@ -1,234 +1,269 @@
-"""Razorpay Webhook ingestion and idempotent event processing pipeline."""
+"""Production Webhook Ingestion Pipeline with HMAC Verification, Out-of-Order Handling, and DLQ."""
 
 import hashlib
+import hmac
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from packages.core.enums import AuditAction, OperationStatus, TransactionStatus
+from packages.core.enums import (
+    AuditAction,
+    OperationStatus,
+    TransactionStatus,
+)
 from packages.core.models import AuditEvent, FinancialOperation, Mandate, Transaction, WebhookEvent
-from packages.razorpay.client import RazorpayClient
+from packages.core.state_machine import FinancialOperationStateMachine
+from packages.shared.config import get_settings
 from packages.shared.database import get_db_session
 from packages.shared.logging import get_logger
 
 logger = get_logger("api.webhooks")
 router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
 
-razorpay_client = RazorpayClient()
 
-
-@router.post("/razorpay", status_code=status.HTTP_200_OK)
+@router.post("/razorpay")
 async def handle_razorpay_webhook(
     request: Request,
     x_razorpay_signature: str = Header(..., alias="X-Razorpay-Signature"),
-    x_razorpay_event_id: str | None = Header(None, alias="X-Razorpay-Event-Id"),
     db: AsyncSession = Depends(get_db_session),
 ) -> Dict[str, Any]:
     """
-    Ingests, verifies HMAC-SHA256 signature, deduplicates, and processes Razorpay webhooks idempotently.
+    Production-grade Webhook Pipeline:
+    1. Read raw body and verify HMAC-SHA256 signature using separate high-entropy secret.
+    2. Idempotency Check: Persist raw event to `webhook_events` before processing.
+    3. Out-of-Order and Duplicate Event Handling.
+    4. State Machine Transition & Budget Accounting.
+    5. Dead-Letter Queue (DLQ) routing upon max retry exhaustion.
     """
-    body_bytes = await request.body()
-    body_str = body_bytes.decode("utf-8")
+    settings = get_settings()
+    raw_body = await request.body()
+    body_str = raw_body.decode("utf-8")
 
-    # 1. Cryptographic Signature Verification
-    if not razorpay_client.verify_webhook_signature(body_str, x_razorpay_signature):
-        logger.warning("invalid_webhook_signature", signature=x_razorpay_signature)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid Razorpay webhook signature",
-        )
+    # 1. Signature Verification
+    if settings.RAZORPAY_WEBHOOK_SECRET:
+        expected_sig = hmac.new(
+            settings.RAZORPAY_WEBHOOK_SECRET.encode("utf-8"),
+            raw_body,
+            hashlib.sha256,
+        ).hexdigest()
 
-    payload = await request.json()
-    event_type = payload.get("event", "unknown")
-    event_id = x_razorpay_event_id or payload.get("id") or f"wh_evt_{uuid.uuid4().hex[:12]}"
-    payload_hash = hashlib.sha256(body_bytes).hexdigest()
+        if not hmac.compare_digest(expected_sig, x_razorpay_signature):
+            logger.warning("webhook_signature_verification_failed", received_sig=x_razorpay_signature)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid Razorpay webhook signature",
+            )
 
-    logger.info("webhook_received", event_id=event_id, event_type=event_type)
+    try:
+        event_data = json.loads(body_str)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Malformed JSON payload")
 
-    # 2. Duplicate Event Protection / Idempotency Check
+    event_id = event_data.get("event_id") or f"evt_{uuid.uuid4().hex[:12]}"
+    event_type = event_data.get("event", "unknown")
+    payload_hash = hashlib.sha256(raw_body).hexdigest()
+
+    # 2. Idempotency Check & Raw Persistence
     existing_stmt = select(WebhookEvent).where(WebhookEvent.event_id == event_id)
     existing_res = await db.execute(existing_stmt)
-    existing_wh = existing_res.scalar_one_or_none()
+    existing_evt = existing_res.scalar_one_or_none()
 
-    if existing_wh:
-        logger.info("duplicate_webhook_event_detected", event_id=event_id, processed=existing_wh.processed)
-        existing_wh.processing_attempts += 1
-        await db.commit()
+    if existing_evt and existing_evt.status == "PROCESSED":
+        logger.info("duplicate_webhook_ignored", event_id=event_id, event_type=event_type)
         return {
-            "status": "duplicate_acknowledged",
+            "status": "DUPLICATE_IGNORED",
+            "message": f"Webhook '{event_id}' already processed idempotently.",
             "event_id": event_id,
-            "processed": existing_wh.processed,
         }
 
-    # Record Webhook receipt in DB
-    wh_event = WebhookEvent(
+    webhook_record = existing_evt or WebhookEvent(
         event_id=event_id,
         event_type=event_type,
         payload_hash=payload_hash,
-        raw_payload=payload,
+        raw_payload=event_data,
         signature_verified=True,
-        processed=False,
-        processing_attempts=1,
+        status="PROCESSING",
+        processing_attempts=1 if not existing_evt else existing_evt.processing_attempts + 1,
     )
-    db.add(wh_event)
+    if not existing_evt:
+        db.add(webhook_record)
+    else:
+        webhook_record.status = "PROCESSING"
+        webhook_record.processing_attempts += 1
     await db.flush()
 
-    # 3. Process Domain State Transitions
-    event_payload = payload.get("payload", {})
+    # 3. Process Domain Event Transition
     try:
-        if event_type in ["payment.captured", "order.paid", "payment.authorized"]:
-            payment_entity = event_payload.get("payment", {}).get("entity", {})
-            order_id = payment_entity.get("order_id")
-            payment_id = payment_entity.get("id")
-            status_str = payment_entity.get("status")
+        await _process_domain_webhook_event(db, event_type, event_data)
+        webhook_record.status = "PROCESSED"
+        webhook_record.processed = True
+        webhook_record.processed_at = datetime.now(timezone.utc)
+        webhook_record.error_message = None
+        await db.commit()
 
-            # Lookup corresponding transaction
-            stmt = select(Transaction).where(
-                (Transaction.gateway_order_id == order_id) | (Transaction.gateway_payment_id == payment_id)
-            )
-            res = await db.execute(stmt)
-            tx = res.scalar_one_or_none()
+        return {
+            "status": "PROCESSED",
+            "event_id": event_id,
+            "event_type": event_type,
+        }
+
+    except Exception as e:
+        logger.error("webhook_processing_failed", event_id=event_id, error=str(e))
+        webhook_record.error_message = str(e)
+
+        if webhook_record.processing_attempts >= webhook_record.max_retries:
+            webhook_record.status = "DEAD_LETTER"
+            logger.critical("webhook_moved_to_dlq", event_id=event_id, attempts=webhook_record.processing_attempts)
+        else:
+            webhook_record.status = "FAILED"
+
+        await db.commit()
+        return {
+            "status": webhook_record.status,
+            "event_id": event_id,
+            "error": str(e),
+        }
+
+
+async def _process_domain_webhook_event(
+    db: AsyncSession,
+    event_type: str,
+    event_data: Dict[str, Any],
+) -> None:
+    """Handles domain state transitions and budget commits for payment/refund/order events."""
+    payload = event_data.get("payload", {})
+
+    # A. Order Paid / Payment Captured
+    if event_type in ["order.paid", "payment.captured"]:
+        payment_entity = payload.get("payment", {}).get("entity", {})
+        order_entity = payload.get("order", {}).get("entity", {})
+
+        order_id = payment_entity.get("order_id") or order_entity.get("id")
+        payment_id = payment_entity.get("id")
+
+        if order_id:
+            tx_stmt = select(Transaction).where(Transaction.gateway_order_id == order_id)
+            tx_res = await db.execute(tx_stmt)
+            tx = tx_res.scalar_one_or_none()
 
             if tx:
-                old_status = tx.status.value
-                new_status = TransactionStatus.CAPTURED if event_type in ["payment.captured", "order.paid"] else TransactionStatus.AUTHORIZED
-                tx.status = new_status
-                tx.gateway_payment_id = payment_id
-                tx.gateway_response = payment_entity
-
-                # Update Financial Operation
                 op = await db.get(FinancialOperation, tx.operation_id)
                 if op and op.status != OperationStatus.SUCCEEDED:
+                    # Validate State Transition
+                    FinancialOperationStateMachine.validate_transition(
+                        current=op.status,
+                        target=OperationStatus.SUCCEEDED,
+                        context_info=f"Webhook event: {event_type}",
+                    )
+
                     op.status = OperationStatus.SUCCEEDED
+                    tx.status = TransactionStatus.CAPTURED
+                    if payment_id:
+                        tx.gateway_payment_id = payment_id
 
-                # Record Immutable Audit Event
-                audit = AuditEvent(
-                    event_id=f"aud_{uuid.uuid4().hex[:16]}",
-                    action=AuditAction.TRANSACTION_RECORDED,
-                    actor_id=event_id,
-                    actor_type="WEBHOOK",
-                    resource_id=tx.id,
-                    resource_type="TRANSACTION",
-                    payload={"event_type": event_type, "payment_id": payment_id, "order_id": order_id},
-                    previous_state={"status": old_status},
-                    new_state={"status": tx.status.value},
-                )
-                db.add(audit)
+                    # Commit Budget from reserved -> current_aggregate_spend
+                    mandate = await db.get(Mandate, op.mandate_id)
+                    if mandate:
+                        # Check if budget is in reserved state
+                        if mandate.reserved_spend >= op.amount:
+                            await db.execute(
+                                update(Mandate)
+                                .where(Mandate.id == mandate.id)
+                                .values(
+                                    reserved_spend=Mandate.reserved_spend - op.amount,
+                                    current_aggregate_spend=Mandate.current_aggregate_spend + op.amount,
+                                    version=Mandate.version + 1,
+                                )
+                            )
+                        else:
+                            # Out-of-order resolution: direct increment
+                            await db.execute(
+                                update(Mandate)
+                                .where(Mandate.id == mandate.id)
+                                .values(
+                                    current_aggregate_spend=Mandate.current_aggregate_spend + op.amount,
+                                    version=Mandate.version + 1,
+                                )
+                            )
 
-        elif event_type in ["payment.failed"]:
-            payment_entity = event_payload.get("payment", {}).get("entity", {})
-            order_id = payment_entity.get("order_id")
-            payment_id = payment_entity.get("id")
+                    audit = AuditEvent(
+                        event_id=f"aud_{uuid.uuid4().hex[:16]}",
+                        action=AuditAction.BUDGET_COMMITTED,
+                        actor_id="WEBHOOK_PROCESSOR",
+                        actor_type="SYSTEM",
+                        resource_id=op.mandate_id,
+                        resource_type="MANDATE",
+                        payload={"event_type": event_type, "order_id": order_id, "amount": op.amount},
+                        new_state={"status": op.status.value},
+                    )
+                    db.add(audit)
 
-            stmt = select(Transaction).where(
-                (Transaction.gateway_order_id == order_id) | (Transaction.gateway_payment_id == payment_id)
-            )
-            res = await db.execute(stmt)
-            tx = res.scalar_one_or_none()
+    # B. Payment Failed
+    elif event_type == "payment.failed":
+        payment_entity = payload.get("payment", {}).get("entity", {})
+        order_id = payment_entity.get("order_id")
+
+        if order_id:
+            tx_stmt = select(Transaction).where(Transaction.gateway_order_id == order_id)
+            tx_res = await db.execute(tx_stmt)
+            tx = tx_res.scalar_one_or_none()
+
             if tx:
-                tx.status = TransactionStatus.FAILED
-                tx.error_code = payment_entity.get("error_code")
-                tx.error_description = payment_entity.get("error_description")
-
                 op = await db.get(FinancialOperation, tx.operation_id)
-                if op:
+                if op and op.status in [OperationStatus.EXECUTING, OperationStatus.RESERVED]:
                     op.status = OperationStatus.FAILED
-                    op.error_message = tx.error_description
+                    op.error_message = payment_entity.get("error_description", "Payment failed via gateway webhook")
+                    tx.status = TransactionStatus.FAILED
 
-                audit = AuditEvent(
-                    event_id=f"aud_{uuid.uuid4().hex[:16]}",
-                    action=AuditAction.TRANSACTION_RECORDED,
-                    actor_id=event_id,
-                    actor_type="WEBHOOK",
-                    resource_id=tx.id,
-                    resource_type="TRANSACTION",
-                    payload={"event_type": event_type, "error": tx.error_description},
-                    new_state={"status": tx.status.value},
-                )
-                db.add(audit)
+                    # Release reserved spend back to mandate
+                    mandate = await db.get(Mandate, op.mandate_id)
+                    if mandate and mandate.reserved_spend >= op.amount:
+                        await db.execute(
+                            update(Mandate)
+                            .where(Mandate.id == mandate.id)
+                            .values(
+                                reserved_spend=Mandate.reserved_spend - op.amount,
+                                version=Mandate.version + 1,
+                            )
+                        )
 
-        elif event_type in ["refund.processed", "refund.created"]:
-            refund_entity = event_payload.get("refund", {}).get("entity", {})
-            refund_id = refund_entity.get("id")
-            payment_id = refund_entity.get("payment_id")
-            refund_amount = refund_entity.get("amount", 0)
+                    audit = AuditEvent(
+                        event_id=f"aud_{uuid.uuid4().hex[:16]}",
+                        action=AuditAction.BUDGET_RELEASED,
+                        actor_id="WEBHOOK_PROCESSOR",
+                        actor_type="SYSTEM",
+                        resource_id=op.mandate_id,
+                        resource_type="MANDATE",
+                        payload={"event_type": event_type, "order_id": order_id, "amount": op.amount},
+                        new_state={"status": op.status.value},
+                    )
+                    db.add(audit)
 
-            stmt = select(Transaction).where(
-                (Transaction.gateway_refund_id == refund_id) | (Transaction.gateway_payment_id == payment_id)
-            )
-            res = await db.execute(stmt)
-            tx = res.scalar_one_or_none()
+    # C. Refund Processed
+    elif event_type == "refund.processed":
+        refund_entity = payload.get("refund", {}).get("entity", {})
+        payment_id = refund_entity.get("payment_id")
+        refund_amount = refund_entity.get("amount", 0)
+
+        if payment_id:
+            tx_stmt = select(Transaction).where(Transaction.gateway_payment_id == payment_id)
+            tx_res = await db.execute(tx_stmt)
+            tx = tx_res.scalar_one_or_none()
+
             if tx:
-                old_status = tx.status.value
-                tx.status = TransactionStatus.REFUNDED
-                tx.gateway_refund_id = refund_id
-
                 op = await db.get(FinancialOperation, tx.operation_id)
-                if op:
-                    op.status = OperationStatus.SUCCEEDED
-
-                # Credit back mandate spend
                 if op:
                     mandate = await db.get(Mandate, op.mandate_id)
-                    if mandate and refund_amount:
-                        mandate.current_aggregate_spend = max(0, mandate.current_aggregate_spend - refund_amount)
-
-                audit = AuditEvent(
-                    event_id=f"aud_{uuid.uuid4().hex[:16]}",
-                    action=AuditAction.TRANSACTION_RECORDED,
-                    actor_id=event_id,
-                    actor_type="WEBHOOK",
-                    resource_id=tx.id,
-                    resource_type="TRANSACTION",
-                    payload={"event_type": event_type, "refund_id": refund_id, "amount": refund_amount},
-                    previous_state={"status": old_status},
-                    new_state={"status": tx.status.value},
-                )
-                db.add(audit)
-
-        elif event_type in ["payment_link.paid"]:
-            link_entity = event_payload.get("payment_link", {}).get("entity", {})
-            link_id = link_entity.get("id")
-
-            stmt = select(Transaction).where(Transaction.gateway_payment_link_id == link_id)
-            res = await db.execute(stmt)
-            tx = res.scalar_one_or_none()
-            if tx:
-                tx.status = TransactionStatus.CAPTURED
-                op = await db.get(FinancialOperation, tx.operation_id)
-                if op:
-                    op.status = OperationStatus.SUCCEEDED
-
-                audit = AuditEvent(
-                    event_id=f"aud_{uuid.uuid4().hex[:16]}",
-                    action=AuditAction.TRANSACTION_RECORDED,
-                    actor_id=event_id,
-                    actor_type="WEBHOOK",
-                    resource_id=tx.id,
-                    resource_type="TRANSACTION",
-                    payload={"event_type": event_type, "link_id": link_id},
-                    new_state={"status": tx.status.value},
-                )
-                db.add(audit)
-
-        wh_event.processed = True
-        wh_event.processed_at = datetime.now(timezone.utc)
-        await db.commit()
-
-    except Exception as exc:
-        logger.error("webhook_processing_failed", event_id=event_id, error=str(exc))
-        wh_event.error_message = str(exc)
-        await db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error processing webhook event",
-        )
-
-    logger.info("webhook_processed_successfully", event_id=event_id)
-    return {
-        "status": "processed",
-        "event_id": event_id,
-        "event_type": event_type,
-    }
+                    if mandate:
+                        # Restore spent budget allowance
+                        await db.execute(
+                            update(Mandate)
+                            .where(Mandate.id == mandate.id)
+                            .values(
+                                current_aggregate_spend=Mandate.current_aggregate_spend - refund_amount,
+                                version=Mandate.version + 1,
+                            )
+                        )

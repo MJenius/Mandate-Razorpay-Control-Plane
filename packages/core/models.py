@@ -1,4 +1,4 @@
-"""SQLAlchemy ORM models representing the persistent domain layer."""
+"""SQLAlchemy ORM models representing the persistent domain layer and event-driven reliability."""
 
 import uuid
 from datetime import datetime, timezone
@@ -68,7 +68,7 @@ class Agent(Base):
     owner_id: Mapped[str] = mapped_column(String(36), ForeignKey("principals.id"), nullable=False, index=True)
     status: Mapped[AgentStatus] = mapped_column(SQLEnum(AgentStatus, native_enum=False), default=AgentStatus.ACTIVE, nullable=False)
     api_key_hash: Mapped[str] = mapped_column(String(256), nullable=False, unique=True, index=True)
-    agent_type: Mapped[str] = mapped_column(String(32), default="SHOPPING", nullable=False) # e.g. "SHOPPING", "SUPPORT", "CUSTOM"
+    agent_type: Mapped[str] = mapped_column(String(32), default="SHOPPING", nullable=False)
     metadata_json: Mapped[Dict[str, Any]] = mapped_column(JSON_TYPE, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
@@ -133,6 +133,7 @@ class FinancialOperation(Base):
     policy_evaluation_details: Mapped[Dict[str, Any]] = mapped_column(JSON_TYPE, default=dict, nullable=False)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     approved_by_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    trace_id: Mapped[str] = mapped_column(String(64), default=lambda: f"tr_{uuid.uuid4().hex[:16]}", nullable=False, index=True)
     
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
@@ -169,8 +170,61 @@ class Transaction(Base):
     operation: Mapped["FinancialOperation"] = relationship("FinancialOperation", back_populates="transactions")
 
 
+class DomainOutboxEvent(Base):
+    """Transactional Outbox for reliable asynchronous event delivery."""
+    __tablename__ = "domain_outbox_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    event_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    topic: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    payload: Mapped[Dict[str, Any]] = mapped_column(JSON_TYPE, default=dict, nullable=False)
+    
+    status: Mapped[str] = mapped_column(String(32), default="PENDING", nullable=False, index=True) # PENDING, PUBLISHED, FAILED
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WebhookEvent(Base):
+    """Durable webhook ingestion model with Dead-Letter Queue (DLQ) support."""
+    __tablename__ = "webhook_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    event_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    
+    raw_payload: Mapped[Dict[str, Any]] = mapped_column(JSON_TYPE, default=dict, nullable=False)
+    signature_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    
+    # State & DLQ Pipeline: RECEIVED -> PROCESSING -> PROCESSED | FAILED -> DEAD_LETTER
+    status: Mapped[str] = mapped_column(String(32), default="RECEIVED", nullable=False, index=True)
+    processed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    processing_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    max_retries: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    trace_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ReconciliationReport(Base):
+    """Stores automated read-only gateway reconciliation audit reports."""
+    __tablename__ = "reconciliation_reports"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    report_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    total_audited: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    inconsistencies_detected: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    details: Mapped[Dict[str, Any]] = mapped_column(JSON_TYPE, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
 class AgentExecutionTrace(Base):
-    """Stores structured tool calls, model outputs, and Mandate policy responses independently of LLM reasoning."""
     __tablename__ = "agent_execution_traces"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
@@ -181,7 +235,6 @@ class AgentExecutionTrace(Base):
     model_provider: Mapped[str] = mapped_column(String(32), default="openai", nullable=False)
     model_name: Mapped[str] = mapped_column(String(64), nullable=False)
     
-    # Structured tool invocation separated from reasoning
     tool_name: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     tool_arguments: Mapped[Dict[str, Any]] = mapped_column(JSON_TYPE, default=dict, nullable=False)
     tool_result: Mapped[Dict[str, Any]] = mapped_column(JSON_TYPE, default=dict, nullable=False)
@@ -194,25 +247,6 @@ class AgentExecutionTrace(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
 
     agent: Mapped["Agent"] = relationship("Agent", back_populates="traces")
-
-
-class WebhookEvent(Base):
-    __tablename__ = "webhook_events"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
-    event_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
-    event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    
-    raw_payload: Mapped[Dict[str, Any]] = mapped_column(JSON_TYPE, default=dict, nullable=False)
-    signature_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    
-    processed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
-    processing_attempts: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
-    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    
-    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
-    processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AuditEvent(Base):
@@ -231,6 +265,7 @@ class AuditEvent(Base):
     payload: Mapped[Dict[str, Any]] = mapped_column(JSON_TYPE, default=dict, nullable=False)
     previous_state: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON_TYPE, nullable=True)
     new_state: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON_TYPE, nullable=True)
+    trace_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False, index=True)
 
