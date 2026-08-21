@@ -1,0 +1,85 @@
+"""FastAPI main application entrypoint."""
+
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
+from fastapi import FastAPI, Request, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from apps.api.routes.agents import router as agents_router
+from apps.api.routes.audit import router as audit_router
+from apps.api.routes.health import router as health_router
+from apps.api.routes.mandates import router as mandates_router
+from apps.api.routes.operations import router as operations_router
+from packages.core.models import Base
+from packages.shared.config import get_settings
+from packages.shared.database import get_engine
+from packages.shared.logging import get_logger, setup_logging
+
+setup_logging()
+logger = get_logger("api.main")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Lifespan context for DB initialization and teardown."""
+    logger.info("mandate_api_starting")
+    settings = get_settings()
+    
+    # Auto-create tables in development / test SQLite / Postgres
+    try:
+        engine = get_engine()
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("database_schema_synced")
+    except Exception as exc:
+        logger.warning("database_sync_deferred", reason=str(exc))
+
+    yield
+    logger.info("mandate_api_stopping")
+
+
+def create_app() -> FastAPI:
+    settings = get_settings()
+
+    app = FastAPI(
+        title="Mandate API",
+        description="Financial authorization and control plane for AI agents operating through Razorpay APIs",
+        version="0.1.0",
+        lifespan=lifespan,
+    )
+
+    # CORS Middleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Global Exception Handler (Structured RFC 7807 JSON)
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        logger.error("unhandled_exception", error=str(exc), path=request.url.path)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "type": "https://mandate.dev/errors/internal-server-error",
+                "title": "Internal Server Error",
+                "status": 500,
+                "detail": "An unexpected error occurred processing the request.",
+                "instance": request.url.path,
+            },
+        )
+
+    # Mount Route Modules
+    app.include_router(health_router)
+    app.include_router(agents_router, prefix="/api/v1")
+    app.include_router(mandates_router, prefix="/api/v1")
+    app.include_router(audit_router, prefix="/api/v1")
+    app.include_router(operations_router, prefix="/api/v1")
+
+    return app
+
+
+app = create_app()

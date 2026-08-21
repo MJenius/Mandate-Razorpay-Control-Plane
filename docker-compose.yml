@@ -1,0 +1,101 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mandate-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mandate_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mandate_secure_password}
+      POSTGRES_DB: ${POSTGRES_DB:-mandate_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mandate_user -d mandate_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: mandate-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: mandate-api
+    command: uvicorn apps.api.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-mandate_user}:${POSTGRES_PASSWORD:-mandate_secure_password}@postgres:5432/${POSTGRES_DB:-mandate_db}
+      - REDIS_URL=redis://redis:6379/0
+      - RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID:-rzp_test_placeholder}
+      - RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET:-placeholder_secret}
+      - RAZORPAY_WEBHOOK_SECRET=${RAZORPAY_WEBHOOK_SECRET:-webhook_placeholder_secret}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: mandate-worker
+    command: python -m services.worker.main
+    volumes:
+      - .:/app
+    environment:
+      - ENVIRONMENT=development
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-mandate_user}:${POSTGRES_PASSWORD:-mandate_secure_password}@postgres:5432/${POSTGRES_DB:-mandate_db}
+      - REDIS_URL=redis://redis:6379/0
+      - RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID:-rzp_test_placeholder}
+      - RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET:-placeholder_secret}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: mandate-web
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./apps/web:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
