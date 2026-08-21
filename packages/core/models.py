@@ -10,6 +10,7 @@ from sqlalchemy import (
     Enum as SQLEnum,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
 )
@@ -80,7 +81,7 @@ class Mandate(Base):
     granted_by_id: Mapped[str] = mapped_column(String(36), ForeignKey("principals.id"), nullable=False)
     status: Mapped[MandateStatus] = mapped_column(SQLEnum(MandateStatus), default=MandateStatus.ACTIVE, nullable=False)
     
-    # Financial Boundaries (in smallest currency unit, e.g. paise for INR, cents for USD)
+    # Financial Boundaries (in smallest currency unit, e.g. paise for INR)
     currency: Mapped[str] = mapped_column(String(3), default="INR", nullable=False)
     max_amount_per_op: Mapped[int] = mapped_column(BigInteger, nullable=False)
     aggregate_spend_limit: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -137,15 +138,41 @@ class Transaction(Base):
     gateway_order_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     gateway_payment_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     gateway_refund_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    gateway_payment_link_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    gateway_payment_link_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     
     amount: Mapped[int] = mapped_column(BigInteger, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), default="INR", nullable=False)
     status: Mapped[TransactionStatus] = mapped_column(SQLEnum(TransactionStatus), default=TransactionStatus.CREATED, nullable=False)
     
     gateway_response: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    error_code: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    error_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
     operation: Mapped["FinancialOperation"] = relationship("FinancialOperation", back_populates="transactions")
+
+
+class WebhookEvent(Base):
+    """Tracks received external webhooks for deduplication and retry resilience."""
+    __tablename__ = "webhook_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    event_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True) # Razorpay x-razorpay-event-id or payload id
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True) # e.g. "payment.captured"
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    
+    raw_payload: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    signature_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    
+    processed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    processing_attempts: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class AuditEvent(Base):
@@ -156,10 +183,10 @@ class AuditEvent(Base):
     action: Mapped[AuditAction] = mapped_column(SQLEnum(AuditAction), nullable=False)
     
     actor_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
-    actor_type: Mapped[str] = mapped_column(String(32), nullable=False) # e.g. "AGENT", "PRINCIPAL", "SYSTEM"
+    actor_type: Mapped[str] = mapped_column(String(32), nullable=False) # e.g. "AGENT", "PRINCIPAL", "WEBHOOK", "SYSTEM"
     
     resource_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
-    resource_type: Mapped[str] = mapped_column(String(32), nullable=False) # e.g. "MANDATE", "FINANCIAL_OPERATION"
+    resource_type: Mapped[str] = mapped_column(String(32), nullable=False) # e.g. "MANDATE", "FINANCIAL_OPERATION", "TRANSACTION", "WEBHOOK"
     
     payload: Mapped[Dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
     previous_state: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)

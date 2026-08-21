@@ -1,4 +1,4 @@
-"""Pydantic schemas for data transfer and validation."""
+"""Pydantic schemas for data transfer, validation, and webhooks."""
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -94,6 +94,21 @@ class OperationCreate(BaseSchema):
     payload: Dict[str, Any] = Field(default_factory=dict)
 
 
+class PaymentVerifyRequest(BaseSchema):
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+
+
+class RefundCreateRequest(BaseSchema):
+    idempotency_key: str = Field(..., min_length=8, max_length=128)
+    agent_id: str
+    mandate_id: str
+    payment_id: str
+    amount: Optional[int] = Field(None, gt=0)
+    notes: Dict[str, str] = Field(default_factory=dict)
+
+
 class OperationResponse(BaseSchema):
     id: str
     operation_id: str
@@ -119,11 +134,28 @@ class TransactionResponse(BaseSchema):
     gateway_order_id: Optional[str] = None
     gateway_payment_id: Optional[str] = None
     gateway_refund_id: Optional[str] = None
+    gateway_payment_link_id: Optional[str] = None
+    gateway_payment_link_url: Optional[str] = None
     amount: int
     currency: str
     status: TransactionStatus
     gateway_response: Dict[str, Any]
+    error_code: Optional[str] = None
+    error_description: Optional[str] = None
     created_at: datetime
+    updated_at: datetime
+
+
+# Webhook Event Schemas
+class WebhookEventResponse(BaseSchema):
+    id: str
+    event_id: str
+    event_type: str
+    signature_verified: bool
+    processed: bool
+    processing_attempts: int
+    received_at: datetime
+    processed_at: Optional[datetime] = None
 
 
 # Audit Event Schemas

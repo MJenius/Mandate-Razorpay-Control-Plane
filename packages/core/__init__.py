@@ -17,6 +17,7 @@ from packages.core.models import (
     Mandate,
     Principal,
     Transaction,
+    WebhookEvent,
 )
 from packages.core.schemas import (
     AgentCreate,
@@ -26,9 +27,12 @@ from packages.core.schemas import (
     MandateResponse,
     OperationCreate,
     OperationResponse,
+    PaymentVerifyRequest,
     PrincipalCreate,
     PrincipalResponse,
+    RefundCreateRequest,
     TransactionResponse,
+    WebhookEventResponse,
 )
 
 __all__ = [
@@ -45,6 +49,7 @@ __all__ = [
     "Mandate",
     "FinancialOperation",
     "Transaction",
+    "WebhookEvent",
     "AuditEvent",
     "PrincipalCreate",
     "PrincipalResponse",
@@ -54,6 +59,9 @@ __all__ = [
     "MandateResponse",
     "OperationCreate",
     "OperationResponse",
+    "PaymentVerifyRequest",
+    "RefundCreateRequest",
     "TransactionResponse",
+    "WebhookEventResponse",
     "AuditEventResponse",
 ]

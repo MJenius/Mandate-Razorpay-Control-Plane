@@ -10,6 +10,7 @@ from apps.api.routes.audit import router as audit_router
 from apps.api.routes.health import router as health_router
 from apps.api.routes.mandates import router as mandates_router
 from apps.api.routes.operations import router as operations_router
+from apps.api.routes.webhooks import router as webhooks_router
 from packages.core.models import Base
 from packages.shared.config import get_settings
 from packages.shared.database import get_engine
@@ -78,6 +79,7 @@ def create_app() -> FastAPI:
     app.include_router(mandates_router, prefix="/api/v1")
     app.include_router(audit_router, prefix="/api/v1")
     app.include_router(operations_router, prefix="/api/v1")
+    app.include_router(webhooks_router, prefix="/api/v1")
 
     return app
 
