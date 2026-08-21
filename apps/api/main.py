@@ -11,6 +11,7 @@ from apps.api.routes.audit import router as audit_router
 from apps.api.routes.evaluation import router as evaluation_router
 from apps.api.routes.health import router as health_router
 from apps.api.routes.mandates import router as mandates_router
+from apps.api.routes.mcp_gateway import router as mcp_gateway_router
 from apps.api.routes.operations import router as operations_router
 from apps.api.routes.telemetry import router as telemetry_router
 from apps.api.routes.webhooks import router as webhooks_router
@@ -47,7 +48,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="Mandate API",
-        description="Financial authorization and control plane for AI agents operating through Razorpay APIs",
+        description="Financial authorization and control plane for AI agents operating through Razorpay APIs & MCP",
         version="0.1.0",
         lifespan=lifespan,
     )
@@ -86,6 +87,7 @@ def create_app() -> FastAPI:
     app.include_router(webhooks_router, prefix="/api/v1")
     app.include_router(telemetry_router, prefix="/api/v1")
     app.include_router(evaluation_router, prefix="/api/v1")
+    app.include_router(mcp_gateway_router, prefix="/api/v1")
 
     return app
 
