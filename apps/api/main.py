@@ -5,6 +5,7 @@ from typing import AsyncGenerator
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from apps.api.routes.agent_chat import router as agent_chat_router
 from apps.api.routes.agents import router as agents_router
 from apps.api.routes.audit import router as audit_router
 from apps.api.routes.health import router as health_router
@@ -76,6 +77,7 @@ def create_app() -> FastAPI:
     # Mount Route Modules
     app.include_router(health_router)
     app.include_router(agents_router, prefix="/api/v1")
+    app.include_router(agent_chat_router, prefix="/api/v1")
     app.include_router(mandates_router, prefix="/api/v1")
     app.include_router(audit_router, prefix="/api/v1")
     app.include_router(operations_router, prefix="/api/v1")

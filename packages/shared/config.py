@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     RAZORPAY_BASE_URL: str = Field(default="https://api.razorpay.com/v1", description="Razorpay API Base URL")
     RAZORPAY_MOCK_MODE: bool = Field(default=False, description="When True, uses mock responses without live API calls")
 
+    # LLM Providers Configuration
+    OPENAI_API_KEY: str = Field(default="", description="OpenAI API Key")
+    OPENAI_MODEL: str = Field(default="gpt-4o-mini", description="OpenAI Model Identifier")
+    DEFAULT_LLM_PROVIDER: str = Field(default="openai", description="Primary LLM provider")
+
     @property
     def cors_origins(self) -> List[str]:
         return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",") if origin.strip()]
