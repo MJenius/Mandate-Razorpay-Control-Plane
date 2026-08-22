@@ -41,8 +41,10 @@ class DemoResetResponse(BaseModel):
     seeded_principal_id: str
     parent_agent_id: str
     child_agent_id: str
+    support_agent_id: str
     parent_mandate_id: str
     child_mandate_id: str
+    support_mandate_id: str
     seeded_at_utc: str
 
 
@@ -101,7 +103,7 @@ async def reset_demo_dataset(
     db.add(principal)
     await db.flush()
 
-    # 3. Seed Specialized AI Agents
+    # 3. Seed 3 Specialized AI Agents
     parent_agent = Agent(
         id="agt_shopping_parent_01",
         name="Primary Shopping Agent",
@@ -129,7 +131,8 @@ async def reset_demo_dataset(
     db.add_all([parent_agent, child_agent, support_agent])
     await db.flush()
 
-    # 4. Seed Hierarchical Mandates (Parent: ₹1,00,000, Child: ₹15,000)
+    # 4. Seed Hierarchical Mandates
+    # Parent Shopping Mandate: ₹25,000 / op, ₹1,00,000 aggregate (Allows CREATE_ORDER, CREATE_PAYMENT_LINK)
     parent_mandate = Mandate(
         id="mnd_parent_root_01",
         agent_id=parent_agent.id,
@@ -145,6 +148,7 @@ async def reset_demo_dataset(
     db.add(parent_mandate)
     await db.flush()
 
+    # Child Procurement Sub-Mandate: ₹10,000 / op, ₹15,000 aggregate (Allows CREATE_ORDER)
     child_mandate = Mandate(
         id="mnd_child_delegated_01",
         agent_id=child_agent.id,
@@ -158,6 +162,20 @@ async def reset_demo_dataset(
         valid_until=datetime.now(UTC) + timedelta(days=15),
     )
     db.add(child_mandate)
+
+    # Customer Support Dispute Mandate: ₹5,000 / refund, ₹25,000 aggregate (Allows CREATE_REFUND)
+    support_mandate = Mandate(
+        id="mnd_support_dispute_01",
+        agent_id=support_agent.id,
+        granted_by_id=principal.id,
+        delegation_depth=0,
+        currency="INR",
+        max_amount_per_op=500000,  # ₹5,000 per refund
+        aggregate_spend_limit=2500000,  # ₹25,000 total refund budget
+        allowed_operations=["CREATE_REFUND"],
+        valid_until=datetime.now(UTC) + timedelta(days=30),
+    )
+    db.add(support_mandate)
 
     # Initial Audit Trail
     audit_evt = AuditEvent(
@@ -174,12 +192,14 @@ async def reset_demo_dataset(
 
     return DemoResetResponse(
         status="SUCCESS",
-        message="Demo dataset reset successfully with deterministic principals, agents, and mandates.",
+        message="Demo dataset reset successfully with deterministic principals, 3 agents, and 3 authority mandates.",
         seeded_principal_id=principal.id,
         parent_agent_id=parent_agent.id,
         child_agent_id=child_agent.id,
+        support_agent_id=support_agent.id,
         parent_mandate_id=parent_mandate.id,
         child_mandate_id=child_mandate.id,
+        support_mandate_id=support_mandate.id,
         seeded_at_utc=datetime.now(UTC).isoformat(),
     )
 
@@ -223,23 +243,24 @@ async def run_scripted_demo_scenario(
                 "product_id": "prod_kb_01",
                 "product_name": "Keychron K2 Keyboard",
                 "quantity": 1,
+                "customer_name": "Procurement Dept",
             },
         )
         op = await request_financial_operation(payload=op_req, db=db)
         return DemoScenarioRunResponse(
             step_number=1,
-            title="Step 1: Legitimate Buyer Purchase via Delegated Sub-Mandate",
+            title="1. Authorized Purchase Within Mandate Bounds",
             description="Procurement Sub-Agent requests compliant ₹6,500 Keychron purchase within ₹10,000 sub-budget bound.",
             decision="ALLOW",
             authorized=True,
             operation_id=op.operation_id,
             amount_inr="₹6,500.00",
             gateway_effect="Razorpay Test Mode Order Created (order_mock_...)",
-            audit_trace_id=op.trace_id,
+            audit_trace_id=op.trace_id or f"tr_{op.operation_id[:8]}",
             details={"status": op.status.value, "policy_rules_passed": 8, "latency_ms": 1.45},
         )
 
-    # Step 2: Overreaching Bulk Order Attack
+    # Step 2: Overreaching Bulk Order Attack -> DENY
     elif step == 2:
         child_mandate = await db.get(Mandate, "mnd_child_delegated_01")
         if not child_mandate:
@@ -259,14 +280,14 @@ async def run_scripted_demo_scenario(
         op = await request_financial_operation(payload=op_req, db=db)
         return DemoScenarioRunResponse(
             step_number=2,
-            title="Step 2: Hostile Overreaching Quantity Escalation Attack Blocked",
+            title="2. Adversarial Bulk Escalation Attack Blocked",
             description="Agent attempts unauthorized 100x bulk order (₹6.5L vs ₹10k per-op bound).",
             decision="DENY",
             authorized=False,
             operation_id=op.operation_id,
             amount_inr="₹6,50,000.00",
             gateway_effect="0 Razorpay Calls Dispatched (Zero-Gateway-Dispatch Invariant)",
-            audit_trace_id=op.trace_id,
+            audit_trace_id=op.trace_id or f"tr_{op.operation_id[:8]}",
             details={
                 "status": op.status.value,
                 "rejection_reasons": op.policy_evaluation_details.get("rejection_reasons", [])
@@ -275,7 +296,7 @@ async def run_scripted_demo_scenario(
             },
         )
 
-    # Step 3: Compromised Agent Cross-Role Attack
+    # Step 3: Compromised Agent Cross-Role Attack -> DENY
     elif step == 3:
         child_mandate = await db.get(Mandate, "mnd_child_delegated_01")
         if not child_mandate:
@@ -295,21 +316,21 @@ async def run_scripted_demo_scenario(
         op = await request_financial_operation(payload=op_req, db=db)
         return DemoScenarioRunResponse(
             step_number=3,
-            title="Step 3: Compromised Cross-Role Refund Attack Blocked",
-            description="Shopping agent attempts unauthorized refund to external payment ID.",
+            title="3. Unauthorized Cross-Role Refund Attack Blocked",
+            description="Buyer/procurement agent attempts unauthorized refund to external payment ID without role permission.",
             decision="DENY",
             authorized=False,
             operation_id=op.operation_id,
             amount_inr="₹2,500.00",
-            gateway_effect="0 Razorpay Calls Dispatched",
-            audit_trace_id=op.trace_id,
+            gateway_effect="0 Razorpay Calls Dispatched (Zero-Gateway-Dispatch Invariant)",
+            audit_trace_id=op.trace_id or f"tr_{op.operation_id[:8]}",
             details={
                 "status": op.status.value,
                 "rejection_reasons": op.policy_evaluation_details.get("rejection_reasons", []),
             },
         )
 
-    # Step 4: Reliability Webhook Auto-Convergence
+    # Step 4: Reliability Webhook Auto-Convergence -> SETTLED
     elif step == 4:
         # Create a pending operation
         op_req = OperationCreate(
@@ -344,18 +365,18 @@ async def run_scripted_demo_scenario(
 
         return DemoScenarioRunResponse(
             step_number=4,
-            title="Step 4: Event-Driven Webhook Ingestion & State Auto-Convergence",
+            title="4. Event-Driven Webhook Ingestion & State Auto-Convergence",
             description="Razorpay webhook verified with HMAC-SHA256 signature, transitioning operation from RESERVED → SUCCEEDED.",
             decision="SETTLED",
             authorized=True,
             operation_id=op.operation_id,
             amount_inr="₹1,500.00",
             gateway_effect="Webhook Processed & State Auto-Converged",
-            audit_trace_id=op.trace_id,
+            audit_trace_id=op.trace_id or f"tr_{op.operation_id[:8]}",
             details={"webhook_status": "PROCESSED", "event_type": "payment.captured"},
         )
 
-    # Step 5: Cascading Parent Revocation
+    # Step 5: Cascading Parent Revocation -> REVOKED
     elif step == 5:
         await revoke_mandate_cascade(
             mandate_id="mnd_parent_root_01",
@@ -366,7 +387,7 @@ async def run_scripted_demo_scenario(
         child = await db.get(Mandate, "mnd_child_delegated_01")
         return DemoScenarioRunResponse(
             step_number=5,
-            title="Step 5: Cascading Parent Revocation Propagation",
+            title="5. Cascading Parent Revocation Propagation",
             description="Root parent mandate revoked by admin. Suspension/revocation instantly propagated down to all child mandates.",
             decision="REVOKED",
             authorized=False,

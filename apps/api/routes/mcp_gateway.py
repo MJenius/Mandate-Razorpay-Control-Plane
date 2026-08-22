@@ -41,6 +41,86 @@ class MCPJsonRpcResponse(BaseModel):
     error: dict[str, Any] | None = None
 
 
+@router.get("/registry")
+async def get_mcp_registry(
+    db: AsyncSession = Depends(get_db_session),
+) -> dict[str, Any]:
+    """
+    Returns full metadata for the 25 registered Razorpay MCP tools across 8 functional domains,
+    along with dynamic attack-surface reduction calculations for standard agent roles.
+    """
+    categories = sorted(list({t["category"] for t in RAZORPAY_MCP_TOOL_REGISTRY.values()}))
+    tools_list = []
+    for name, tool in RAZORPAY_MCP_TOOL_REGISTRY.items():
+        tools_list.append(
+            {
+                "name": name,
+                "description": tool["description"],
+                "category": tool["category"],
+                "operation_type": tool["operation_type"].value
+                if tool.get("operation_type") and hasattr(tool["operation_type"], "value")
+                else str(tool.get("operation_type"))
+                if tool.get("operation_type")
+                else None,
+                "inputSchema": tool["inputSchema"],
+            }
+        )
+
+    total_tools = len(RAZORPAY_MCP_TOOL_REGISTRY)
+
+    # Calculate exact reduction for standard agent roles
+    # Shopping Agent allows: CREATE_ORDER, CREATE_PAYMENT_LINK (3 tools)
+    # Procurement Sub-Agent allows: CREATE_ORDER (2 tools)
+    # Support Agent allows: CREATE_REFUND (3 tools)
+    profiles_summary = {
+        "unprotected_direct_mcp": {
+            "name": "Direct Unprotected Razorpay MCP Server",
+            "exposed_tools_count": total_tools,
+            "permitted_categories": categories,
+            "attack_surface_reduction_pct": 0.0,
+            "credential_exposure": "Raw API credentials provided in agent system prompt",
+            "risk": "100% of tool methods exposed (payouts, settlements, refunds, invoices)",
+        },
+        "shopping_agent": {
+            "name": "Shopping / Buyer Agent (Primary)",
+            "allowed_operations": ["CREATE_ORDER", "CREATE_PAYMENT_LINK"],
+            "permitted_tools": [
+                "payments_create_order",
+                "payments_fetch_order",
+                "payments_fetch_all_orders",
+            ],
+            "exposed_tools_count": 3,
+            "attack_surface_reduction_pct": round(((total_tools - 3) / total_tools) * 100, 1),
+        },
+        "procurement_agent": {
+            "name": "Procurement Sub-Agent (Hardware)",
+            "allowed_operations": ["CREATE_ORDER"],
+            "permitted_tools": ["payments_create_order", "payments_fetch_order"],
+            "exposed_tools_count": 2,
+            "attack_surface_reduction_pct": round(((total_tools - 2) / total_tools) * 100, 1),
+        },
+        "support_agent": {
+            "name": "Customer Support & Returns Agent",
+            "allowed_operations": ["CREATE_REFUND"],
+            "permitted_tools": [
+                "payments_create_refund",
+                "payments_fetch_refund",
+                "payments_fetch_payment",
+            ],
+            "exposed_tools_count": 3,
+            "attack_surface_reduction_pct": round(((total_tools - 3) / total_tools) * 100, 1),
+        },
+    }
+
+    return {
+        "total_registered_tools": total_tools,
+        "functional_categories_count": len(categories),
+        "categories": categories,
+        "tools": tools_list,
+        "profiles_summary": profiles_summary,
+    }
+
+
 @router.post("", response_model=MCPJsonRpcResponse)
 async def handle_mcp_jsonrpc_gateway(
     request_payload: MCPJsonRpcRequest,

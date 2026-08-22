@@ -1,221 +1,399 @@
 "use client";
 
 import React, { useState } from "react";
-import { Play, RotateCcw, ShieldCheck, AlertTriangle, ArrowRight, CheckCircle2, XCircle, Zap, Terminal, GitBranch, Layers, DollarSign } from "lucide-react";
+import {
+  Play,
+  RotateCcw,
+  CheckCircle2,
+  XCircle,
+  AlertTriangle,
+  ArrowRight,
+  ShieldCheck,
+  CreditCard,
+  UserCheck,
+  Bot,
+  Zap,
+  Terminal,
+  Clock,
+  Sparkles,
+  Lock,
+  Layers,
+} from "lucide-react";
+import { api, DemoStepResult } from "@/lib/api";
+import PageHeader from "@/components/common/PageHeader";
+import StatusBadge from "@/components/common/StatusBadge";
+import IntegrationBadge from "@/components/common/IntegrationBadge";
+import ConfirmDialog from "@/components/common/ConfirmDialog";
+import { useToast } from "@/components/common/Toast";
 
-export default function CompetitionDemoPage() {
-  const [currentStep, setCurrentStep] = useState<number>(0);
-  const [isRunning, setIsRunning] = useState<boolean>(false);
-  const [stepLogs, setStepLogs] = useState<any[]>([]);
+interface StepConfig {
+  stepNumber: number;
+  title: string;
+  category: "AUTHORIZED" | "BLOCKED" | "REVIEW";
+  agentName: string;
+  agentId: string;
+  amountInr: string;
+  operationType: string;
+  description: string;
+  securityInvariant: string;
+  expectedDecision: "ALLOW" | "DENY" | "REQUIRE_HUMAN_REVIEW";
+}
 
-  const demoSteps = [
-    {
-      num: 1,
-      title: "Legitimate Buyer Commerce via Sub-Mandate",
-      desc: "Procurement Agent purchases ₹6,500 Keychron K2 within delegated ₹10,000 bound.",
-      expected: "ALLOW (Razorpay Order Created)",
-      badge: "LEGITIMATE",
-    },
-    {
-      num: 2,
-      title: "Overreaching 100x Bulk Escalation Attack",
-      desc: "Agent attempts unauthorized ₹6,50,000 bulk order exceeding per-op bound.",
-      expected: "DENY (0 Gateway Calls)",
-      badge: "HOSTILE ATTACK",
-    },
-    {
-      num: 3,
-      title: "Compromised Cross-Role Refund Attack",
-      desc: "Shopping agent attempts rogue refund to external payment ID.",
-      expected: "DENY (Blocked by Whitelist)",
-      badge: "COMPROMISED",
-    },
-    {
-      num: 4,
-      title: "Event-Driven Webhook Auto-Convergence",
-      desc: "payment.captured webhook verified with HMAC-SHA256, auto-converging state.",
-      expected: "SUCCEEDED / COMMITTED",
-      badge: "RELIABILITY",
-    },
-    {
-      num: 5,
-      title: "Cascading Parent Revocation Propagation",
-      desc: "Root mandate revoked by admin, instantly disabling all child authority.",
-      expected: "REVOKED (All Children Disabled)",
-      badge: "HIERARCHY",
-    },
-  ];
+const DEMO_STEPS: StepConfig[] = [
+  {
+    stepNumber: 1,
+    title: "1. Authorized Purchase Within Mandate Bounds",
+    category: "AUTHORIZED",
+    agentName: "Procurement Sub-Agent",
+    agentId: "agt_procurement_child_01",
+    amountInr: "₹6,500",
+    operationType: "CREATE_ORDER",
+    description:
+      "Procurement sub-agent purchases 1 Keychron K2 Keyboard for ₹6,500. This is strictly within the ₹10,000 delegated sub-budget bound.",
+    securityInvariant: "All 8 deterministic policy rules pass in <2ms. Two-phase budget reservation commits spend to Razorpay Test Mode.",
+    expectedDecision: "ALLOW",
+  },
+  {
+    stepNumber: 2,
+    title: "2. Adversarial Bulk Escalation Attack Blocked",
+    category: "BLOCKED",
+    agentName: "Compromised Agent",
+    agentId: "agt_procurement_child_01",
+    amountInr: "₹6,50,000",
+    operationType: "CREATE_ORDER",
+    description:
+      "Adversarial prompt injection attempts unauthorized 100x bulk order for ₹6,50,000, attempting to drain enterprise capital.",
+    securityInvariant: "PER_TRANSACTION_LIMIT_CHECK & AGGREGATE_SPEND_LIMIT_CHECK block execution. Zero-Gateway-Dispatch Guarantee: 0 calls touch Razorpay.",
+    expectedDecision: "DENY",
+  },
+  {
+    stepNumber: 3,
+    title: "3. Unauthorized Cross-Role Refund Attack Blocked",
+    category: "BLOCKED",
+    agentName: "Buyer Agent (Unprivileged)",
+    agentId: "agt_procurement_child_01",
+    amountInr: "₹2,500",
+    operationType: "CREATE_REFUND",
+    description:
+      "Prompt injection attempts to invoke customer refund capabilities from a buyer agent to siphon funds into an external account.",
+    securityInvariant: "OPERATION_TYPE_CHECK strictly verifies operation allowlist. Procurement agents cannot create refunds; rejected with 0 gateway dispatches.",
+    expectedDecision: "DENY",
+  },
+  {
+    stepNumber: 4,
+    title: "4. Event-Driven Webhook Auto-Convergence",
+    category: "AUTHORIZED",
+    agentName: "Procurement Sub-Agent",
+    agentId: "agt_procurement_child_01",
+    amountInr: "₹1,500",
+    operationType: "CREATE_ORDER",
+    description:
+      "Inbound Razorpay payment.captured webhook arrives with cryptographic HMAC-SHA256 signature, transitioning state from RESERVED to SUCCEEDED.",
+    securityInvariant: "HMAC signature verification and idempotency locks prevent double-spend and guarantee ledger auto-convergence.",
+    expectedDecision: "ALLOW",
+  },
+  {
+    stepNumber: 5,
+    title: "5. Cascading Parent Revocation Propagation",
+    category: "BLOCKED",
+    agentName: "Alpha Commerce Enterprise (Admin)",
+    agentId: "prn_alpha_corp_01",
+    amountInr: "₹0.00",
+    operationType: "MANDATE_REVOKED",
+    description:
+      "Root parent mandate revoked by enterprise admin. Suspension/revocation instantly cascades down the DAG, permanently disabling all child authority.",
+    securityInvariant: "HIERARCHICAL_DELEGATION_CHECK immediately invalidates child mandates if any ancestor in the tree is revoked.",
+    expectedDecision: "DENY",
+  },
+];
 
-  const handleReset = async () => {
-    setIsRunning(true);
-    setStepLogs([]);
-    setCurrentStep(0);
+export default function DemoPage() {
+  const toast = useToast();
+  const [selectedStepNumber, setSelectedStepNumber] = useState<number>(1);
+  const [stepResults, setStepResults] = useState<Record<number, DemoStepResult>>({});
+  const [runningStep, setRunningStep] = useState<number | null>(null);
+  const [runningAll, setRunningAll] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [confirmResetOpen, setConfirmResetOpen] = useState(false);
+
+  const activeStepConfig =
+    DEMO_STEPS.find((s) => s.stepNumber === selectedStepNumber) || DEMO_STEPS[0];
+
+  const handleResetDataset = async () => {
+    setResetting(true);
     try {
-      const res = await fetch("http://localhost:8000/api/v1/demo/reset", { method: "POST" });
-      const data = await res.json();
-      setStepLogs([{ type: "SYSTEM", text: "Clean slate reset: Seeded Alpha Commerce Enterprise (Parent ₹1L, Child ₹15K)" }]);
-    } catch (e) {
-      setStepLogs([{ type: "ERROR", text: "Reset failed. Is FastAPI backend running?" }]);
+      const res = await api.resetDemo();
+      setStepResults({});
+      toast.success(
+        "Clean Slate Reset Complete",
+        `Bootstrapped principal, 2 agents, 2 mandates, and clean ledger.`
+      );
+    } catch (err: unknown) {
+      toast.error("Reset Failed", err instanceof Error ? err.message : String(err));
+    } finally {
+      setResetting(false);
+      setConfirmResetOpen(false);
     }
-    setIsRunning(false);
   };
 
-  const handleExecuteStep = async (stepNum: number) => {
-    setIsRunning(true);
-    setCurrentStep(stepNum);
+  const handleRunStep = async (stepNum: number) => {
+    setRunningStep(stepNum);
     try {
-      const res = await fetch("http://localhost:8000/api/v1/demo/run-scenario", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ step_number: stepNum }),
-      });
-      const data = await res.json();
-      setStepLogs((prev) => [
-        ...prev,
-        {
-          type: data.authorized ? "SUCCESS" : "BLOCKED",
-          step: data.step_number,
-          title: data.title,
-          decision: data.decision,
-          effect: data.gateway_effect,
-          trace: data.audit_trace_id,
-        },
-      ]);
-    } catch (e) {
-      setStepLogs((prev) => [...prev, { type: "ERROR", text: `Step ${stepNum} failed: ${String(e)}` }]);
+      const res = await api.runDemoScenario(stepNum);
+      setStepResults((prev) => ({ ...prev, [stepNum]: res }));
+
+      if (res.decision === "ALLOW") {
+        toast.success(`Step ${stepNum} Executed`, `Decision: ALLOW · Razorpay Order Created`);
+      } else if (res.decision === "DENY") {
+        toast.warning(`Step ${stepNum} Blocked`, `Decision: DENY · 0 Gateway Dispatches`);
+      } else {
+        toast.info(`Step ${stepNum} Review Required`, `Decision: REQUIRE_HUMAN_REVIEW`);
+      }
+    } catch (err: unknown) {
+      toast.error(`Step ${stepNum} Failed`, err instanceof Error ? err.message : String(err));
+    } finally {
+      setRunningStep(null);
     }
-    setIsRunning(false);
+  };
+
+  const handleRunAllSteps = async () => {
+    setRunningAll(true);
+    try {
+      toast.info("Starting Guided 5-Step Runner", "Executing scenarios sequentially...");
+      for (const step of DEMO_STEPS) {
+        setSelectedStepNumber(step.stepNumber);
+        setRunningStep(step.stepNumber);
+        const res = await api.runDemoScenario(step.stepNumber);
+        setStepResults((prev) => ({ ...prev, [step.stepNumber]: res }));
+        await new Promise((r) => setTimeout(r, 600));
+      }
+      toast.success("Showcase Complete", "All 5 competition demo scenarios evaluated.");
+    } catch (err: unknown) {
+      toast.error("Runner Interrupted", err instanceof Error ? err.message : String(err));
+    } finally {
+      setRunningStep(null);
+      setRunningAll(false);
+    }
   };
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-white">Competition Demo Mode (5-Minute Showcase)</h1>
-          <p className="text-sm text-slate-400">
-            Scripted end-to-end evaluation demonstrating autonomous commerce, adversarial protection, event reliability, and hierarchical revocation.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={handleReset}
-            disabled={isRunning}
-            className="flex items-center gap-1.5 rounded-lg bg-slate-800 border border-slate-700 px-3.5 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700 transition-colors shadow-sm disabled:opacity-50"
-          >
-            <RotateCcw className="h-3.5 w-3.5" />
-            Reset Clean Slate
-          </button>
-        </div>
+    <div className="space-y-6 max-w-7xl mx-auto font-sans">
+      {/* Page Header */}
+      <PageHeader
+        title="Competition Showcase & 5-Step Guided Runner"
+        icon={Sparkles}
+        architecturePhase="Comprehensive System Verification"
+        description="A guided 5-step scenario runner that proves every core architectural guarantee: valid within-bound shopping, delegated sub-mandates, blocked adversarial prompt injection attacks, blocked privilege escalation, and human-in-the-loop approval thresholds."
+        actions={
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setConfirmResetOpen(true)}
+              disabled={resetting || runningAll}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 px-3.5 py-2 text-xs font-semibold transition-all disabled:opacity-50"
+            >
+              <RotateCcw className={`h-3.5 w-3.5 ${resetting ? "animate-spin" : ""}`} />
+              <span>Reset Clean Slate</span>
+            </button>
+            <button
+              onClick={handleRunAllSteps}
+              disabled={runningAll || runningStep !== null}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 px-4 py-2 text-xs font-semibold text-white shadow-md shadow-blue-600/25 transition-all disabled:opacity-50"
+            >
+              <Play className={`h-3.5 w-3.5 ${runningAll ? "animate-spin" : ""}`} />
+              <span>{runningAll ? "Running All 5 Steps..." : "Run All 5 Steps"}</span>
+            </button>
+          </div>
+        }
+      />
+
+      {/* 5-Step Pipeline Strip */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+        {DEMO_STEPS.map((step) => {
+          const isSelected = selectedStepNumber === step.stepNumber;
+          const isExecuting = runningStep === step.stepNumber;
+          const result = stepResults[step.stepNumber];
+
+          return (
+            <button
+              key={step.stepNumber}
+              onClick={() => setSelectedStepNumber(step.stepNumber)}
+              className={`p-4 rounded-2xl border text-left transition-all relative flex flex-col justify-between space-y-3 ${
+                isSelected
+                  ? "bg-blue-600/15 border-blue-500 shadow-lg shadow-blue-500/10 scale-[1.02]"
+                  : "bg-[#111827] border-[#1f293d] hover:border-slate-700"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="h-6 w-6 rounded-lg bg-slate-900 border border-slate-800 text-blue-400 flex items-center justify-center font-mono font-bold text-xs">
+                  #{step.stepNumber}
+                </span>
+                {result ? (
+                  <StatusBadge status={result.decision} />
+                ) : (
+                  <span className="text-[10px] font-mono text-slate-500">READY</span>
+                )}
+              </div>
+
+              <div className="space-y-1">
+                <h3 className="font-bold text-white text-xs leading-snug line-clamp-2">
+                  {step.title.split(". ")[1]}
+                </h3>
+                <p className="text-[10px] text-slate-400 font-mono">
+                  {step.amountInr} · {step.operationType}
+                </p>
+              </div>
+
+              <div className="text-[9px] font-mono text-slate-500 pt-1 border-t border-slate-800/80">
+                {step.agentName}
+              </div>
+            </button>
+          );
+        })}
       </div>
 
-      {/* 1,000-Scenario Benchmark Scorecard Banner */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <div className="rounded-xl bg-[#111827] border border-[#1f293d] p-4">
-          <span className="text-xs text-slate-400 font-medium">Scenarios Evaluated</span>
-          <span className="text-xl font-bold text-white block mt-1">1,000 Trials</span>
-          <span className="text-[10px] text-slate-500 font-mono">800 Hostile + 200 Legit</span>
-        </div>
-        <div className="rounded-xl bg-[#111827] border border-[#1f293d] p-4">
-          <span className="text-xs text-slate-400 font-medium">Hostile Block Rate</span>
-          <span className="text-xl font-bold text-emerald-400 block mt-1">100.0%</span>
-          <span className="text-[10px] text-emerald-500 font-mono">0.0% Policy Bypass</span>
-        </div>
-        <div className="rounded-xl bg-[#111827] border border-[#1f293d] p-4">
-          <span className="text-xs text-slate-400 font-medium">Loss Prevented (₹)</span>
-          <span className="text-xl font-bold text-indigo-400 block mt-1">₹21.85 Cr</span>
-          <span className="text-[10px] text-slate-500 font-mono">Counterfactual baseline</span>
-        </div>
-        <div className="rounded-xl bg-[#111827] border border-[#1f293d] p-4">
-          <span className="text-xs text-slate-400 font-medium">P50 / P95 Latency</span>
-          <span className="text-xl font-bold text-white block mt-1">6.3ms / 12.2ms</span>
-          <span className="text-[10px] text-blue-400 font-mono">Sub-15ms decision gate</span>
-        </div>
-      </div>
-
-      {/* Scripted 5-Step Runner Grid */}
+      {/* Active Step Details & Live Execution Console */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 rounded-xl bg-[#111827] border border-[#1f293d] p-6 space-y-4">
-          <div className="flex items-center justify-between border-b border-[#1f293d] pb-3">
-            <div className="flex items-center gap-2">
-              <Play className="h-4 w-4 text-blue-400" />
-              <h2 className="text-sm font-semibold text-white">5-Minute Scripted Competition Showcase Steps</h2>
+        {/* Left 2 Cols: Step Scenario Specifications */}
+        <div className="lg:col-span-2 rounded-2xl bg-[#111827] border border-[#1f293d] p-6 space-y-5 shadow-xl">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-[#1f293d] pb-3">
+            <div>
+              <span className="text-[10px] font-mono text-blue-400 uppercase tracking-wider block">
+                Scenario #{activeStepConfig.stepNumber} Focus
+              </span>
+              <h2 className="text-base font-bold text-white mt-0.5">{activeStepConfig.title}</h2>
             </div>
-            <span className="text-xs text-slate-400 font-mono">Click step to execute</span>
+            <button
+              onClick={() => handleRunStep(activeStepConfig.stepNumber)}
+              disabled={runningStep !== null || runningAll}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-xs font-semibold text-white shadow-md shadow-emerald-600/25 transition-all disabled:opacity-50"
+            >
+              <Play className={`h-3.5 w-3.5 ${runningStep === activeStepConfig.stepNumber ? "animate-spin" : ""}`} />
+              <span>
+                {runningStep === activeStepConfig.stepNumber
+                  ? "Evaluating Step..."
+                  : `Execute Step ${activeStepConfig.stepNumber}`}
+              </span>
+            </button>
           </div>
 
+          <p className="text-xs text-slate-300 leading-relaxed font-sans">
+            {activeStepConfig.description}
+          </p>
+
+          {/* Parameters Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
+            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-0.5">
+              <span className="text-slate-500 text-[10px] block font-sans">Target Agent</span>
+              <strong className="text-white text-xs">{activeStepConfig.agentName}</strong>
+            </div>
+
+            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-0.5">
+              <span className="text-slate-500 text-[10px] block font-sans">Operation</span>
+              <strong className="text-blue-300 text-xs">{activeStepConfig.operationType}</strong>
+            </div>
+
+            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-0.5">
+              <span className="text-slate-500 text-[10px] block font-sans">Amount (INR)</span>
+              <strong className="text-emerald-400 text-xs">{activeStepConfig.amountInr}</strong>
+            </div>
+
+            <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-0.5">
+              <span className="text-slate-500 text-[10px] block font-sans">Expected Decision</span>
+              <strong className="text-purple-300 text-xs">{activeStepConfig.expectedDecision}</strong>
+            </div>
+          </div>
+
+          {/* Security Invariant Guarantee Banner */}
+          <div className="p-4 rounded-xl bg-blue-950/20 border border-blue-900/40 text-blue-300 space-y-1 text-xs font-sans">
+            <div className="flex items-center gap-2 font-bold text-white">
+              <ShieldCheck className="h-4 w-4 text-blue-400" />
+              <span>Architectural Invariant Guarantee:</span>
+            </div>
+            <p className="text-[11px] text-blue-200/90 leading-relaxed">
+              {activeStepConfig.securityInvariant}
+            </p>
+          </div>
+        </div>
+
+        {/* Right Col: Live Execution Output & Verification Scorecard */}
+        <div className="rounded-2xl bg-[#111827] border border-[#1f293d] p-6 space-y-4 shadow-xl flex flex-col justify-between">
           <div className="space-y-3">
-            {demoSteps.map((s) => (
-              <div
-                key={s.num}
-                onClick={() => handleExecuteStep(s.num)}
-                className={`p-4 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
-                  currentStep === s.num
-                    ? "bg-blue-600/10 border-blue-500/50 shadow-sm"
-                    : "bg-slate-900/60 border-slate-800 hover:border-slate-700"
-                }`}
-              >
-                <div className="flex items-start gap-3.5">
-                  <div className="h-7 w-7 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-mono font-bold text-slate-300 shrink-0">
-                    {s.num}
+            <div className="flex items-center justify-between border-b border-[#1f293d] pb-3">
+              <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                <Terminal className="h-4 w-4 text-indigo-400" />
+                <span>Backend Execution Result</span>
+              </h3>
+              {stepResults[activeStepConfig.stepNumber] && (
+                <StatusBadge status={stepResults[activeStepConfig.stepNumber].decision} />
+              )}
+            </div>
+
+            {stepResults[activeStepConfig.stepNumber] ? (
+              <div className="space-y-3 font-mono text-xs animate-in fade-in duration-150">
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5">
+                  <div className="flex justify-between text-slate-400">
+                    <span>Authorized:</span>
+                    <strong
+                      className={
+                        stepResults[activeStepConfig.stepNumber].authorized
+                          ? "text-emerald-400"
+                          : "text-rose-400"
+                      }
+                    >
+                      {stepResults[activeStepConfig.stepNumber].authorized ? "YES" : "NO"}
+                    </strong>
                   </div>
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-semibold text-white">{s.title}</span>
-                      <span className="px-2 py-0.5 rounded text-[9px] font-mono bg-slate-800 text-slate-300 border border-slate-700">
-                        {s.badge}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-400 leading-snug">{s.desc}</p>
-                    <span className="text-[10px] font-mono text-emerald-400 block mt-0.5">Expected: {s.expected}</span>
+
+                  <div className="flex justify-between text-slate-400">
+                    <span>Operation ID:</span>
+                    <span className="text-white">
+                      {stepResults[activeStepConfig.stepNumber].operation_id || "None (Blocked)"}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between text-slate-400">
+                    <span>Audit Trace ID:</span>
+                    <span className="text-blue-400">
+                      {stepResults[activeStepConfig.stepNumber].audit_trace_id}
+                    </span>
                   </div>
                 </div>
-                <ArrowRight className="h-4 w-4 text-slate-500 shrink-0 ml-2" />
-              </div>
-            ))}
-          </div>
-        </div>
 
-        {/* Live Execution Output & Trace Inspector */}
-        <div className="rounded-xl bg-[#111827] border border-[#1f293d] p-6 space-y-4">
-          <div className="flex items-center gap-2 border-b border-[#1f293d] pb-3">
-            <Terminal className="h-4 w-4 text-emerald-400" />
-            <h2 className="text-sm font-semibold text-white">Live Execution Traces</h2>
-          </div>
+                <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1">
+                  <span className="text-[10px] text-slate-400 block font-sans">Gateway Effect:</span>
+                  <p className="text-xs font-bold text-white">
+                    {stepResults[activeStepConfig.stepNumber].gateway_effect}
+                  </p>
+                </div>
 
-          <div className="h-96 overflow-y-auto space-y-2.5 font-mono text-[11px] pr-1">
-            {stepLogs.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-slate-500 text-center text-xs">
-                Click "Reset Clean Slate" or any step to view live execution traces.
+                <div className="space-y-1">
+                  <span className="text-[10px] text-slate-400 block">Raw Backend Response:</span>
+                  <pre className="p-2.5 rounded-xl bg-black/60 border border-slate-800 text-[10px] text-emerald-400 overflow-x-auto max-h-36">
+                    {JSON.stringify(stepResults[activeStepConfig.stepNumber].details, null, 2)}
+                  </pre>
+                </div>
               </div>
             ) : (
-              stepLogs.map((log, idx) => (
-                <div
-                  key={idx}
-                  className={`p-3 rounded-lg border leading-relaxed ${
-                    log.type === "BLOCKED"
-                      ? "bg-rose-950/20 border-rose-900/40 text-rose-300"
-                      : log.type === "SUCCESS"
-                      ? "bg-emerald-950/20 border-emerald-900/40 text-emerald-300"
-                      : "bg-slate-900 border-slate-800 text-slate-300"
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-bold">{log.title || log.text}</span>
-                    {log.decision && (
-                      <span className="px-1.5 py-0.5 rounded text-[9px] bg-black/40 font-mono">
-                        {log.decision}
-                      </span>
-                    )}
-                  </div>
-                  {log.effect && <div className="text-[10px] text-slate-400">Gateway Effect: {log.effect}</div>}
-                  {log.trace && <div className="text-[9px] text-slate-500">Trace ID: {log.trace}</div>}
-                </div>
-              ))
+              <div className="py-12 text-center text-slate-500 text-xs font-mono space-y-2">
+                <Clock className="h-8 w-8 mx-auto text-slate-700" />
+                <p>Click &quot;Execute Step {activeStepConfig.stepNumber}&quot; to run live evaluation against FastAPI backend.</p>
+              </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* Confirmation Dialog for Reset */}
+      <ConfirmDialog
+        isOpen={confirmResetOpen}
+        title="Reset Demo Dataset to Clean Slate?"
+        description="This will clear all transactions, reset parent/child agent mandates to initial ₹1,00,000 / ₹15,000 budgets, and initialize the clean baseline dataset."
+        confirmLabel="Reset Clean Slate"
+        isDestructive={true}
+        isLoading={resetting}
+        onConfirm={handleResetDataset}
+        onCancel={() => setConfirmResetOpen(false)}
+      />
     </div>
   );
 }

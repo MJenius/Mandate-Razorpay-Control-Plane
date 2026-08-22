@@ -139,13 +139,23 @@ def _format_tool_execution_response(raw_content: str) -> str:
             f"Here are the available products in our verified catalog:\n\n{items_str}\n\n"
             "Let me know if you would like me to procure any of these items within my mandate bounds."
         )
+    if "operation_id" in parsed_res and "status" in parsed_res and "amount_inr" in parsed_res and "policy_decision" not in parsed_res:
+        return (
+            f"🔍 **Transaction Lookup Details:**\n\n"
+            f"• **Operation ID:** `{parsed_res['operation_id']}`\n"
+            f"• **Status:** `{parsed_res['status']}`\n"
+            f"• **Amount:** **{parsed_res['amount_inr']}**\n"
+            f"• **Operation Type:** `{parsed_res.get('operation_type', 'CREATE_ORDER')}`\n"
+            f"• **Timestamp:** {parsed_res.get('created_at', 'Recorded in ledger')}\n\n"
+            f"Verified against Mandate Ledger & PostgreSQL event store."
+        )
     if parsed_res.get("policy_decision") == "ALLOW":
-        prod = parsed_res.get("product") or "Item"
+        prod = parsed_res.get("product") or ("Customer Refund" if "refund" in str(parsed_res) else "Item")
         op_id = parsed_res.get("operation_id")
         amt = parsed_res.get("amount_inr")
         return (
-            f"✅ **Purchase Order Authorized!**\n\n"
-            f"I have successfully created purchase order `{op_id}` for **{prod}** totaling **{amt}**.\n"
+            f"✅ **Financial Operation Authorized!**\n\n"
+            f"I have successfully executed `{op_id}` for **{prod}** totaling **{amt}**.\n"
             f"Mandate's Deterministic Policy Gate approved the transaction and reserved the funds."
         )
     if parsed_res.get("policy_decision") == "DENY":
@@ -172,24 +182,46 @@ def _parse_semantic_intent(user_text: str) -> list[LLMToolCall] | str:
             )
         ]
 
-    # 2. Refund Intent
+    # 2. Lookup Transaction Intent
+    if any(k in user_text for k in ["lookup", "inspect", "status", "check operation", "op_"]):
+        # Extract op_id from text if specified
+        words = user_text.replace(":", " ").replace(",", " ").replace('"', " ").replace("'", " ").split()
+        target_op = "op_demo_step1"
+        for w in words:
+            if w.startswith("op_") or w.startswith("pay_"):
+                target_op = w
+                break
+        return [
+            LLMToolCall(
+                id=f"call_lookup_{uuid.uuid4().hex[:8]}",
+                name="lookup_transaction",
+                arguments={"operation_id": target_op},
+            )
+        ]
+
+    # 3. Refund Intent
     if "refund" in user_text or "return" in user_text:
-        amt = 2500 if "2,500" in user_text or "2500" in user_text else 1000
+        amt = 1500 if "1,500" in user_text or "1500" in user_text else 2500 if "2,500" in user_text or "2500" in user_text else 1000
+        words = user_text.replace(":", " ").replace(",", " ").replace('"', " ").replace("'", " ").split()
+        target_pay_id = "pay_demo_cap_01" if "pay_demo" in user_text else "pay_fake_attacker_01"
+        for w in words:
+            if w.startswith("pay_"):
+                target_pay_id = w
+                break
+
         return [
             LLMToolCall(
                 id=f"call_rfnd_{uuid.uuid4().hex[:8]}",
                 name="issue_customer_refund",
                 arguments={
-                    "payment_id": "pay_fake_attacker_01"
-                    if "attacker" in user_text
-                    else "pay_demo_legit_01",
+                    "payment_id": target_pay_id,
                     "amount_in_rupees": amt,
-                    "reason": "Customer request via playground",
+                    "reason": "Customer request via support dialogue",
                 },
             )
         ]
 
-    # 3. Order / Buy Intent
+    # 4. Order / Buy Intent
     if any(k in user_text for k in ["buy", "order", "procure", "purchase", "keyboard", "monitor"]):
         qty = 100 if "100" in user_text else 5 if "5" in user_text else 1
         prod_id = (
@@ -209,7 +241,7 @@ def _parse_semantic_intent(user_text: str) -> list[LLMToolCall] | str:
             )
         ]
 
-    # 4. Payment Link Intent
+    # 5. Payment Link Intent
     if "payment link" in user_text or "link" in user_text or "invoice" in user_text:
         return [
             LLMToolCall(
@@ -223,7 +255,7 @@ def _parse_semantic_intent(user_text: str) -> list[LLMToolCall] | str:
             )
         ]
 
-    # 5. Out-of-scope / Conversational Inquiries
+    # 6. Out-of-scope / Conversational Inquiries
     if any(w in user_text for w in ["ps5", "free", "million", "hello", "hi", "help", "who"]):
         return (
             "I am your bounded Mandate AI agent. I can only perform financial operations permitted "
@@ -233,7 +265,7 @@ def _parse_semantic_intent(user_text: str) -> list[LLMToolCall] | str:
 
     return (
         f'I understood your request: "{user_text}". However, no matching financial tool was triggered. '
-        "You can ask me to browse the catalog, order an item (e.g. Keychron K2), or create a payment link."
+        "You can ask me to browse the catalog, order an item (e.g. Keychron K2), look up a transaction, or create a payment link."
     )
 
 

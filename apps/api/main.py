@@ -16,6 +16,7 @@ from apps.api.routes.health import router as health_router
 from apps.api.routes.mandates import router as mandates_router
 from apps.api.routes.mcp_gateway import router as mcp_gateway_router
 from apps.api.routes.operations import router as operations_router
+from apps.api.routes.policies import router as policies_router
 from apps.api.routes.telemetry import router as telemetry_router
 from apps.api.routes.webhooks import router as webhooks_router
 from packages.core.models import Base
@@ -103,6 +104,7 @@ def create_app() -> FastAPI:
     app.include_router(webhooks_router, prefix="/api/v1")
     app.include_router(telemetry_router, prefix="/api/v1")
     app.include_router(evaluation_router, prefix="/api/v1")
+    app.include_router(policies_router, prefix="/api/v1")
     app.include_router(mcp_gateway_router, prefix="/api/v1")
     app.include_router(demo_router, prefix="/api/v1")
 

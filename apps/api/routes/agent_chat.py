@@ -87,15 +87,28 @@ async def chat_with_agent(
         prev_mandate = (await db.execute(prev_mandate_stmt)).scalars().first()
 
         logger.info("reissuing_active_mandate_for_interactive_agent", agent_id=agent.id)
+        if agent.agent_type.upper() == "SUPPORT":
+            max_op = 500000  # ₹5,000
+            agg_limit = 2500000  # ₹25,000
+            allowed_ops = ["CREATE_REFUND"]
+        elif agent.agent_type.upper() == "SHOPPING":
+            max_op = 2500000  # ₹25,000
+            agg_limit = 10000000  # ₹1,00,000
+            allowed_ops = ["CREATE_ORDER", "CREATE_PAYMENT_LINK"]
+        else:  # PROCUREMENT or default
+            max_op = 1000000  # ₹10,000
+            agg_limit = 1500000  # ₹15,000
+            allowed_ops = ["CREATE_ORDER"]
+
         mandate = Mandate(
             id=f"mnd_{agent.agent_type.lower()}_{uuid.uuid4().hex[:8]}",
             agent_id=agent.id,
             granted_by_id=agent.owner_id,
             delegation_depth=0 if not prev_mandate else prev_mandate.delegation_depth,
             currency="INR",
-            max_amount_per_op=2500000 if agent.agent_type.upper() == "SHOPPING" else 1000000,
-            aggregate_spend_limit=10000000 if agent.agent_type.upper() == "SHOPPING" else 1500000,
-            allowed_operations=["CREATE_ORDER", "CREATE_PAYMENT_LINK"] if agent.agent_type.upper() == "SHOPPING" else ["CREATE_ORDER"],
+            max_amount_per_op=max_op,
+            aggregate_spend_limit=agg_limit,
+            allowed_operations=allowed_ops,
             valid_until=datetime.now(UTC) + timedelta(days=30),
         )
         db.add(mandate)

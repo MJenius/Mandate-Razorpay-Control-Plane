@@ -20,7 +20,7 @@ router = APIRouter(prefix="/evaluation", tags=["Adversarial Evaluation Lab"])
 class RunBenchmarkRequest(BaseModel):
     agent_id: str | None = None
     seed: int = Field(default=42, description="Deterministic seed for reproducible evaluation")
-    multiplier: int = Field(default=1, ge=1, le=50, description="Multiplier for scenario volume")
+    multiplier: int = Field(default=1, ge=1, le=500, description="Multiplier for scenario volume")
 
 
 @router.get("/scenarios")
@@ -58,9 +58,17 @@ async def execute_adversarial_benchmark(
         mandate = (await db.execute(mandate_stmt)).scalar_one_or_none()
 
     if not agent or not mandate:
+        # Auto-seed demo dataset if database was unseeded or revoked
+        from apps.api.routes.demo import reset_demo_dataset
+
+        await reset_demo_dataset(db=db)
+        agent = await db.get(Agent, "agt_shopping_parent_01")
+        mandate = await db.get(Mandate, "mnd_parent_root_01")
+
+    if not agent or not mandate:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Benchmark requires at least one active agent and mandate in the system.",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to initialize benchmark agent and mandate.",
         )
 
     logger.info("running_adversarial_benchmark", seed=payload.seed, multiplier=payload.multiplier)
