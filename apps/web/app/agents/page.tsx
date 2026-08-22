@@ -77,15 +77,17 @@ const AGENT_ROLES = [
     description: "Handles customer order inspection and bounded refund authorization.",
     tools: ["lookup_transaction", "issue_customer_refund"],
     samplePrompts: [
-      "Lookup transaction op_demo_step1",
-      "Issue customer refund of Rs. 1,500 for pay_demo_cap_01",
-      "Create a purchase order for Rs. 50,000 (Unpermitted for Support Agent)",
+      "Inspect the latest purchase order in the ledger",
+      "Process a damaged item return refund of Rs. 1,500",
+      "Issue an unauthorized refund of Rs. 25,000 (Exceeds Policy Limit)",
+      "Attempt to buy a laptop for Rs. 50,000 (Role Violation)",
     ],
   },
 ];
 
 export default function AgentsPage() {
   const toast = useToast();
+  const [dbAgents, setDbAgents] = useState<Agent[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string>("agt_shopping_parent_01");
   const [agentDetails, setAgentDetails] = useState<Agent | null>(null);
   const [agentMandate, setAgentMandate] = useState<Mandate | null>(null);
@@ -100,20 +102,25 @@ export default function AgentsPage() {
   const [selectedTrace, setSelectedTrace] = useState<AgentTrace | null>(null);
   const [expandedDiagnostics, setExpandedDiagnostics] = useState<Record<string, boolean>>({});
 
+  // Register Agent Modal State
+  const [showRegisterModal, setShowRegisterModal] = useState(false);
+  const [newAgentName, setNewAgentName] = useState("");
+  const [newAgentType, setNewAgentType] = useState<string>("SHOPPING");
+  const [newAgentDesc, setNewAgentDesc] = useState("");
+  const [registering, setRegistering] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
-
-  const activeRole = AGENT_ROLES.find((r) => r.id === selectedAgentId) || AGENT_ROLES[0];
 
   // Initialize session and welcome message
   useEffect(() => {
     setMounted(true);
     const newSession = `sess_${Date.now()}`;
     setSessionId(newSession);
+    const role = AGENT_ROLES.find((r) => r.id === selectedAgentId) || AGENT_ROLES[0];
     setMessages([
       {
         id: "m_welcome",
         sender: "agent",
-        text: `Connected to ${activeRole.name}. Ready to process natural language instructions. Tool calls will be intercepted and evaluated by Mandate's Deterministic Policy Engine.`,
+        text: `Connected to ${role.name}. Ready to process natural language instructions. Tool calls will be intercepted and evaluated by Mandate's Deterministic Policy Engine.`,
         timestamp: "Ready",
       },
     ]);
@@ -122,11 +129,15 @@ export default function AgentsPage() {
   // Load Agent metadata & active mandate
   const loadAgentContext = async () => {
     try {
-      const [agentData, mandatesData] = await Promise.all([
+      const [allAgents, agentData, mandatesData] = await Promise.all([
+        api.getAgents().catch(() => []),
         api.getAgent(selectedAgentId).catch(() => null),
         api.getMandates(selectedAgentId).catch(() => []),
       ]);
 
+      if (allAgents && allAgents.length > 0) {
+        setDbAgents(allAgents);
+      }
       if (agentData) setAgentDetails(agentData);
       if (mandatesData && mandatesData.length > 0) {
         setAgentMandate(mandatesData.find((m) => m.status === "ACTIVE") || mandatesData[0]);
@@ -137,6 +148,52 @@ export default function AgentsPage() {
       // Ignore
     }
   };
+
+  const handleRegisterAgent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAgentName.trim()) return;
+    setRegistering(true);
+    try {
+      const created = await api.registerAgent({
+        name: newAgentName,
+        agent_type: newAgentType,
+        description: newAgentDesc || `Autonomous ${newAgentType.toLowerCase()} agent`,
+      });
+      toast.success("Agent Registered", `Agent '${created.name}' (${created.id}) created successfully.`);
+      setShowRegisterModal(false);
+      setNewAgentName("");
+      setNewAgentDesc("");
+      await loadAgentContext();
+      setSelectedAgentId(created.id);
+    } catch (err: unknown) {
+      toast.error("Registration Failed", err instanceof Error ? err.message : String(err));
+    } finally {
+      setRegistering(false);
+    }
+  };
+
+  // Merge predefined static roles with dynamically registered agents
+  const allAgentRoles = [
+    ...AGENT_ROLES,
+    ...dbAgents
+      .filter((a) => !AGENT_ROLES.some((r) => r.id === a.id))
+      .map((a) => ({
+        id: a.id,
+        name: a.name,
+        type: a.agent_type || "CUSTOM",
+        icon: a.agent_type === "SUPPORT" ? HelpCircle : a.agent_type === "PROCUREMENT" ? Cpu : ShoppingCart,
+        color: "emerald",
+        description: a.description || "Registered autonomous agent with Mandate authority.",
+        tools: ["browse_catalog", "create_purchase_order"],
+        samplePrompts: [
+          "Browse the electronics catalog",
+          "Buy 1 Keychron K2 Mechanical Keyboard for Alice",
+          "Inspect latest order in ledger",
+        ],
+      })),
+  ];
+
+  const activeRole = allAgentRoles.find((r) => r.id === selectedAgentId) || allAgentRoles[0];
 
   // Load agent execution traces from PostgreSQL
   const loadTraces = async () => {
@@ -238,25 +295,34 @@ export default function AgentsPage() {
         architecturePhase="Stage 1: AI Agent Tool-Calling Runtime"
         description="Interact directly with specialized AI agents in natural language. Every financial action (orders, refunds, payment links) proposed by an LLM is intercepted and evaluated deterministically by Mandate's Policy Gate before touching Razorpay."
         actions={
-          <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 p-1 rounded-xl">
-            {AGENT_ROLES.map((role) => {
-              const RoleIcon = role.icon;
-              const isSelected = selectedAgentId === role.id;
-              return (
-                <button
-                  key={role.id}
-                  onClick={() => setSelectedAgentId(role.id)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                    isSelected
-                      ? "bg-blue-600 text-white shadow-sm font-semibold"
-                      : "text-slate-400 hover:text-white"
-                  }`}
-                >
-                  <RoleIcon className="h-3.5 w-3.5" />
-                  <span>{role.name}</span>
-                </button>
-              );
-            })}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setShowRegisterModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md shadow-blue-600/20"
+            >
+              <UserCheck className="h-3.5 w-3.5" />
+              <span>Register New Agent</span>
+            </button>
+            <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-xl">
+              {allAgentRoles.map((role) => {
+                const RoleIcon = role.icon;
+                const isSelected = selectedAgentId === role.id;
+                return (
+                  <button
+                    key={role.id}
+                    onClick={() => setSelectedAgentId(role.id)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                      isSelected
+                        ? "bg-blue-600 text-white shadow-sm font-semibold"
+                        : "text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    <RoleIcon className="h-3.5 w-3.5" />
+                    <span>{role.name}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         }
       />
@@ -623,6 +689,83 @@ export default function AgentsPage() {
           )}
         </div>
       </div>
+
+      {/* Register New AI Agent Modal */}
+      {showRegisterModal && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#111827] border border-[#1f293d] rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-[#1f293d] pb-3">
+              <div className="flex items-center gap-2">
+                <UserCheck className="h-5 w-5 text-blue-400" />
+                <h2 className="text-base font-bold text-white">Register New AI Agent</h2>
+              </div>
+              <button
+                onClick={() => setShowRegisterModal(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleRegisterAgent} className="space-y-4 text-xs font-sans">
+              <div>
+                <label className="text-slate-300 font-medium block mb-1">Agent Name</label>
+                <input
+                  type="text"
+                  value={newAgentName}
+                  onChange={(e) => setNewAgentName(e.target.value)}
+                  placeholder="e.g. Master Buyer, Inventory Agent"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white font-mono focus:outline-none focus:border-blue-500"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="text-slate-300 font-medium block mb-1">Agent Type / Role</label>
+                <select
+                  value={newAgentType}
+                  onChange={(e) => setNewAgentType(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white font-mono focus:outline-none focus:border-blue-500"
+                  required
+                >
+                  <option value="SHOPPING">SHOPPING — Autonomous Buyer & Invoicing</option>
+                  <option value="PROCUREMENT">PROCUREMENT — Bounded Supplies & Sub-Orders</option>
+                  <option value="SUPPORT">SUPPORT — Customer Inspection & Dispute Refunds</option>
+                  <option value="FINANCE">FINANCE — Corporate Accounting & Payouts</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-slate-300 font-medium block mb-1">Description (Optional)</label>
+                <textarea
+                  value={newAgentDesc}
+                  onChange={(e) => setNewAgentDesc(e.target.value)}
+                  placeholder="Describe the agent's autonomous responsibilities..."
+                  rows={2}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white font-sans focus:outline-none focus:border-blue-500 resize-none"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2.5 pt-3 border-t border-[#1f293d]">
+                <button
+                  type="button"
+                  onClick={() => setShowRegisterModal(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={registering || !newAgentName.trim()}
+                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md shadow-blue-600/20 disabled:opacity-50"
+                >
+                  {registering ? "Registering..." : "Confirm & Register Agent"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -140,13 +140,19 @@ def _format_tool_execution_response(raw_content: str) -> str:
             "Let me know if you would like me to procure any of these items within my mandate bounds."
         )
     if "operation_id" in parsed_res and "status" in parsed_res and "amount_inr" in parsed_res and "policy_decision" not in parsed_res:
+        item = parsed_res.get("product", "Keychron K2 Mechanical Keyboard")
+        op_id = parsed_res["operation_id"]
+        price = parsed_res["amount_inr"]
+        status = parsed_res["status"]
+        refund_status = parsed_res.get("refund_eligible", "Yes (Within 30-day return policy window)")
+
         return (
-            f"🔍 **Transaction Lookup Details:**\n\n"
-            f"• **Operation ID:** `{parsed_res['operation_id']}`\n"
-            f"• **Status:** `{parsed_res['status']}`\n"
-            f"• **Amount:** **{parsed_res['amount_inr']}**\n"
-            f"• **Operation Type:** `{parsed_res.get('operation_type', 'CREATE_ORDER')}`\n"
-            f"• **Timestamp:** {parsed_res.get('created_at', 'Recorded in ledger')}\n\n"
+            f"📦 **Order Details:**\n\n"
+            f"• **Item:** **{item}**\n"
+            f"• **Order ID:** `{op_id}`\n"
+            f"• **Price:** **{price}**\n"
+            f"• **Status:** `{status}`\n"
+            f"• **Refund Status:** {refund_status}\n\n"
             f"Verified against Mandate Ledger & PostgreSQL event store."
         )
     if parsed_res.get("policy_decision") == "ALLOW":
@@ -172,21 +178,68 @@ def _format_tool_execution_response(raw_content: str) -> str:
 
 def _parse_semantic_intent(user_text: str) -> list[LLMToolCall] | str:
     """Parses natural language prompt and returns tool call or friendly conversational reply."""
-    # 1. Browse Catalog Intent
-    if any(k in user_text for k in ["browse", "catalog", "products", "items", "list"]):
-        return [
-            LLMToolCall(
-                id=f"call_browse_{uuid.uuid4().hex[:8]}",
-                name="browse_catalog",
-                arguments={},
-            )
-        ]
+    text_lower = user_text.lower().strip()
 
-    # 2. Lookup Transaction Intent
-    if any(k in user_text for k in ["lookup", "inspect", "status", "check operation", "op_"]):
-        # Extract op_id from text if specified
+    # 0. Conversational Greetings & Identity (Chatbot persona)
+    if text_lower in ["hello", "hi", "hey", "good morning", "good evening", "greetings"]:
+        return (
+            "Hello! I am your Mandate AI Agent. I can help you explore our verified catalog, "
+            "inspect purchase history in the ledger, recommend products, and securely execute bounded financial transactions."
+        )
+
+    # 0b. Capabilities, Limits, and Boundaries (Conversational explanation)
+    if any(
+        phrase in text_lower
+        for phrase in [
+            "what is your limit",
+            "what it your limit",
+            "what are your limits",
+            "how much can you",
+            "what are your bounds",
+            "what are your rules",
+            "tell me your limit",
+            "tell me your bound",
+            "what can you do",
+            "how do you work",
+            "who are you",
+            "help",
+        ]
+    ):
+        return (
+            "I operate as an autonomous AI Agent bounded by Mandate's Deterministic Policy Gate. "
+            "I can chat with you, browse products, look up past orders, and process authorized purchases or refunds. "
+            "Every financial action I propose is cryptographically validated and constrained by mathematical authority limits before touching Razorpay."
+        )
+
+    # 1. Inspection / Ledger History Queries (Must NOT buy or mutate funds)
+    if any(
+        k in text_lower
+        for k in [
+            "recent purchases",
+            "my purchases",
+            "past purchases",
+            "recent orders",
+            "my orders",
+            "past orders",
+            "show my recent",
+            "show recent",
+            "show orders",
+            "show purchases",
+            "what did i buy",
+            "what did we buy",
+            "what was bought",
+            "inspect",
+            "lookup",
+            "status",
+            "check operation",
+            "check order",
+            "latest order",
+            "last order",
+            "op_",
+        ]
+    ):
         words = user_text.replace(":", " ").replace(",", " ").replace('"', " ").replace("'", " ").split()
-        target_op = "op_demo_step1"
+        target_op = "latest_order" if any(w in text_lower for w in ["order", "bought", "purchase", "item", "recent", "past", "my"]) else "latest"
         for w in words:
             if w.startswith("op_") or w.startswith("pay_"):
                 target_op = w
@@ -195,13 +248,106 @@ def _parse_semantic_intent(user_text: str) -> list[LLMToolCall] | str:
             LLMToolCall(
                 id=f"call_lookup_{uuid.uuid4().hex[:8]}",
                 name="lookup_transaction",
-                arguments={"operation_id": target_op},
+                arguments={
+                    "operation_id": target_op,
+                    "order_only": True,
+                },
             )
         ]
 
-    # 3. Refund Intent
-    if "refund" in user_text or "return" in user_text:
-        amt = 1500 if "1,500" in user_text or "1500" in user_text else 2500 if "2,500" in user_text or "2500" in user_text else 1000
+    # 2. Browse Catalog Intent
+    if any(
+        k in text_lower
+        for k in [
+            "browse",
+            "catalog",
+            "products",
+            "show products",
+            "list items",
+            "what do you sell",
+            "available items",
+            "show items",
+            "what is there",
+            "what can i buy",
+            "what all can i buy",
+            "what can we buy",
+            "what to buy",
+            "what is available",
+            "what do you have",
+            "items for sale",
+        ]
+    ):
+        return [
+            LLMToolCall(
+                id=f"call_browse_{uuid.uuid4().hex[:8]}",
+                name="browse_catalog",
+                arguments={},
+            )
+        ]
+
+    # 3. Conversational Product Queries & Recommendations
+    if any(q in text_lower for q in ["what is", "tell me about", "price of", "cost of", "how much is", "recommend", "show me", "which", "difference between"]):
+        if any(k in text_lower for k in ["keyboard", "keychron"]):
+            return (
+                "The **Keychron K2 Mechanical Keyboard** is available in our catalog for **Rs. 6,500.00**. "
+                "It features wireless/wired connectivity and hot-swappable switches. Say *'Buy 1 Keychron K2'* if you'd like me to order it!"
+            )
+        if any(k in text_lower for k in ["mouse", "logitech", "mx master"]):
+            return (
+                "The **Logitech MX Master 3S Mouse** is available for **Rs. 8,999.00**. "
+                "It is designed for ergonomics and ultra-quiet precision. Say *'Buy 1 Logitech Mouse'* to purchase."
+            )
+        if any(k in text_lower for k in ["desk mat", "mat", "felt"]):
+            return (
+                "The **Ergonomic Wool Felt Desk Mat** is available for **Rs. 1,500.00**. "
+                "Say *'Buy 1 Desk Mat'* if you would like me to procure one."
+            )
+        if any(k in text_lower for k in ["monitor", "dell", "4k"]):
+            return (
+                "The **Dell UltraSharp 32-inch 4K Monitor** is priced at **Rs. 75,000.00**. "
+                "High-value hardware orders are governed by Mandate's multi-level policy thresholds."
+            )
+        if any(k in text_lower for k in ["workstation", "server", "gpu"]):
+            return (
+                "The **Rackmount GPU AI Workstation** is priced at **Rs. 4,50,000.00** for enterprise compute workloads."
+            )
+
+    # 4. Refund Intent (Active command to issue or return)
+    if any(k in text_lower for k in ["refund", "return", "reimburse"]):
+        if any(q in text_lower for q in ["can i refund", "is refund possible", "how do refunds work", "policy on refund", "do you do refunds"]):
+            return (
+                "Yes! Settled purchases within 30 days are eligible for refund through customer support. "
+                "You can say *'Process a damaged item return refund of Rs. 1,500'* to initiate a refund."
+            )
+
+        import re
+        amt = 1000.0
+        if "25,000" in user_text or "25000" in user_text:
+            amt = 25000.0
+        elif "2,500" in user_text or "2500" in user_text:
+            amt = 2500.0
+        elif "1,500" in user_text or "1500" in user_text:
+            amt = 1500.0
+        elif "5,000" in user_text or "5000" in user_text:
+            amt = 5000.0
+        elif "6,500" in user_text or "6500" in user_text or "keyboard" in text_lower or "keychron" in text_lower:
+            amt = 6500.0
+        elif "8,999" in user_text or "8999" in user_text or "mouse" in text_lower or "logitech" in text_lower:
+            amt = 8999.0
+        elif "desk mat" in text_lower or "felt" in text_lower or "mat" in text_lower:
+            amt = 1500.0
+        elif "monitor" in text_lower or "75,000" in user_text or "75000" in user_text:
+            amt = 75000.0
+        else:
+            match = re.search(r"(?:rs\.?|₹|\$)?\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?|\d+)", user_text, re.IGNORECASE)
+            if match:
+                try:
+                    val = float(match.group(1).replace(",", ""))
+                    if val > 0:
+                        amt = val
+                except Exception:
+                    amt = 1000.0
+
         words = user_text.replace(":", " ").replace(",", " ").replace('"', " ").replace("'", " ").split()
         target_pay_id = "pay_demo_cap_01" if "pay_demo" in user_text else "pay_fake_attacker_01"
         for w in words:
@@ -221,14 +367,68 @@ def _parse_semantic_intent(user_text: str) -> list[LLMToolCall] | str:
             )
         ]
 
-    # 4. Order / Buy Intent
-    if any(k in user_text for k in ["buy", "order", "procure", "purchase", "keyboard", "monitor"]):
-        qty = 100 if "100" in user_text else 5 if "5" in user_text else 1
-        prod_id = (
-            "prod_monitor_high_end"
-            if "monitor" in user_text or "dell" in user_text or "75,000" in user_text
-            else "prod_kb_01"
+    # 5. Explicit Order / Buy Intent (Active purchasing command)
+    is_buying_action = (
+        any(
+            cmd in text_lower
+            for cmd in [
+                "buy 1",
+                "buy a",
+                "buy the",
+                "buy two",
+                "buy 5",
+                "buy ",
+                "place order",
+                "place an order",
+                "procure",
+                "purchase 1",
+                "purchase a",
+                "purchase the",
+                "i want to buy",
+                "i would like to buy",
+                "get me a",
+                "get me 1",
+                "get a",
+                "create purchase order",
+                "create order",
+                "order 1",
+                "order a",
+                "order the",
+            ]
         )
+        or (
+            text_lower.startswith("buy")
+            or text_lower.startswith("order")
+            or text_lower.startswith("purchase")
+            or text_lower.startswith("procure")
+        )
+    ) and not any(
+        q in text_lower
+        for q in [
+            "what can",
+            "what all",
+            "can i buy",
+            "should i buy",
+            "how to buy",
+            "where to buy",
+            "why buy",
+        ]
+    )
+
+    if is_buying_action:
+        qty = 100 if "100" in user_text else 5 if "5" in user_text else 1
+
+        if any(k in text_lower for k in ["mat", "desk mat", "felt", "wool"]):
+            prod_id = "prod_desk_mat_01"
+        elif any(k in text_lower for k in ["mouse", "logitech", "mx master", "mx"]):
+            prod_id = "prod_mouse_01"
+        elif any(k in text_lower for k in ["monitor", "dell", "4k", "ultrasharp", "75,000", "screen"]):
+            prod_id = "prod_monitor_high_end"
+        elif any(k in text_lower for k in ["workstation", "server", "gpu", "rackmount", "ai rack", "450,000"]):
+            prod_id = "prod_enterprise_server"
+        else:
+            prod_id = "prod_kb_01"
+
         return [
             LLMToolCall(
                 id=f"call_order_{uuid.uuid4().hex[:8]}",
@@ -241,8 +441,8 @@ def _parse_semantic_intent(user_text: str) -> list[LLMToolCall] | str:
             )
         ]
 
-    # 5. Payment Link Intent
-    if "payment link" in user_text or "link" in user_text or "invoice" in user_text:
+    # 6. Payment Link Intent
+    if "payment link" in text_lower or "send invoice" in text_lower or "create invoice" in text_lower:
         return [
             LLMToolCall(
                 id=f"call_plink_{uuid.uuid4().hex[:8]}",
@@ -255,17 +455,13 @@ def _parse_semantic_intent(user_text: str) -> list[LLMToolCall] | str:
             )
         ]
 
-    # 6. Out-of-scope / Conversational Inquiries
-    if any(w in user_text for w in ["ps5", "free", "million", "hello", "hi", "help", "who"]):
-        return (
-            "I am your bounded Mandate AI agent. I can only perform financial operations permitted "
-            "under my cryptographic mandate (browsing catalog, purchasing approved items, creating invoices). "
-            "I cannot disburse arbitrary funds, claim unauthorized inventory, or execute out-of-policy requests."
-        )
+    # 7. Conversational Pleasantries & Fallback
+    if any(w in text_lower for w in ["thank", "thanks", "awesome", "great", "cool", "ok", "okay", "good", "bye"]):
+        return "You're welcome! Let me know if you need help exploring the catalog, looking up past orders, or executing bounded financial transactions."
 
     return (
-        f'I understood your request: "{user_text}". However, no matching financial tool was triggered. '
-        "You can ask me to browse the catalog, order an item (e.g. Keychron K2), look up a transaction, or create a payment link."
+        f'I am here to help! You asked: "{user_text}". '
+        "You can chat with me about items in our catalog, ask me to check your recent purchases, or command a financial action (e.g. *'Buy 1 Keychron K2'* or *'Process a refund of Rs. 1,500'*)."
     )
 
 

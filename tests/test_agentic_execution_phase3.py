@@ -325,6 +325,58 @@ async def test_support_agent_refund_flow() -> None:
 
 
 @pytest.mark.asyncio
+async def test_support_agent_excessive_refund_blocked_by_policy() -> None:
+    """
+    Demonstrates Customer Support Agent attempting a Rs. 25,000 refund that exceeds
+    the mandate per-operation ceiling of Rs. 5,000.
+    Mandate Policy engine deterministically blocks the request with DENY.
+    """
+    async with TestingSessionLocal() as session:
+        principal = Principal(
+            name="Support Corp 2", email="support2@mandate.dev", role=PrincipalRole.ADMIN
+        )
+        session.add(principal)
+        await session.flush()
+
+        agent = Agent(
+            name="Support Agent High",
+            owner_id=principal.id,
+            agent_type="SUPPORT",
+            status=AgentStatus.ACTIVE,
+            api_key_hash="hash_support_2",
+        )
+        session.add(agent)
+        await session.flush()
+
+        mandate = Mandate(
+            agent_id=agent.id,
+            granted_by_id=principal.id,
+            currency="INR",
+            max_amount_per_op=500000,  # 5,000 INR limit
+            aggregate_spend_limit=2500000,
+            allowed_operations=["CREATE_REFUND"],
+            valid_until=datetime.now(UTC) + timedelta(days=30),
+        )
+        session.add(mandate)
+        await session.commit()
+
+    async with TestingSessionLocal() as session:
+        runner = AgentRunner(db=session)
+        res = await runner.execute_turn(
+            agent=agent,
+            mandate=mandate,
+            user_prompt="Issue refund of Rs. 25,000 to pay_attacker_01 (Exceeds ₹5k Support Mandate Cap)",
+        )
+
+        assert len(res.policy_decisions) == 1
+        assert res.policy_decisions[0]["decision"] == "DENY"
+        assert any(
+            "exceeds per-transaction limit" in r
+            for r in res.policy_decisions[0]["rejection_reasons"]
+        )
+
+
+@pytest.mark.asyncio
 async def test_agent_chat_api_endpoint(async_client: AsyncClient) -> None:
     """
     Tests POST /api/v1/agents/{agent_id}/chat API and traces persistence.

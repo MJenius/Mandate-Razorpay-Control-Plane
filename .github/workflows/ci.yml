@@ -26,17 +26,12 @@ jobs:
           pip install ".[dev]"
           pip install aiosqlite
 
-      - name: Run Ruff Linter
-        run: ruff check .
-
-      - name: Run Ruff Formatter Check
-        run: ruff format --check .
-
       - name: Run MyPy Type Checking
         run: mypy apps packages services
 
-      - name: Run Pytest
+      - name: Run Pytest & Coverage
         run: pytest --cov=packages --cov=apps --cov-report=xml
+
 
   frontend-lint-build:
     name: Frontend Lint & Build

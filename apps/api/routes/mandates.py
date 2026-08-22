@@ -29,12 +29,32 @@ async def create_mandate(
     db: AsyncSession = Depends(get_db_session),
 ) -> Mandate:
     """Issue a root financial mandate for an agent."""
-    agent = await db.get(Agent, payload.agent_id)
+    # 1. Resolve Agent by ID, Name, Substring, or extracted ID
+    import re
+    cleaned_id = payload.agent_id.strip()
+    extracted_match = re.search(r"(agt_[a-zA-Z0-9_]+)", cleaned_id)
+    target_lookup = extracted_match.group(1) if extracted_match else cleaned_id
+
+    agent = await db.get(Agent, target_lookup)
     if not agent:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+        name_stmt = select(Agent).where(
+            (Agent.name.ilike(f"%{target_lookup}%"))
+            | (Agent.id.ilike(f"%{target_lookup}%"))
+            | (Agent.agent_type.ilike(f"%{target_lookup}%"))
+        )
+        agent = (await db.execute(name_stmt)).scalar_one_or_none()
+
+    if not agent:
+        existing = (await db.execute(select(Agent.name, Agent.id))).all()
+        existing_names = [f"'{row[0]}' ({row[1]})" for row in existing]
+        avail_str = ", ".join(existing_names) if existing_names else "None"
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent '{payload.agent_id}' not found. Available agents: {avail_str}. Please select an existing agent or create one on the Agents page.",
+        )
 
     mandate = Mandate(
-        agent_id=payload.agent_id,
+        agent_id=agent.id,
         granted_by_id=payload.granted_by_id,
         status=MandateStatus.ACTIVE,
         currency=payload.currency.upper(),

@@ -124,23 +124,72 @@ async def get_mcp_registry(
 @router.post("", response_model=MCPJsonRpcResponse)
 async def handle_mcp_jsonrpc_gateway(
     request_payload: MCPJsonRpcRequest,
-    x_agent_id: str = Header(
-        ..., alias="X-Agent-Id", description="Authenticated calling AI Agent ID"
+    x_agent_key: str | None = Header(
+        None, alias="X-Agent-Key", description="Authoritative calling AI Agent API Key"
+    ),
+    authorization: str | None = Header(
+        None, alias="Authorization", description="Authoritative Bearer token (Agent Key)"
+    ),
+    x_agent_id: str | None = Header(
+        None, alias="X-Agent-Id", description="Agent ID (Compatibility / Demo verification)"
     ),
     db: AsyncSession = Depends(get_db_session),
 ) -> MCPJsonRpcResponse:
     """
     Production JSON-RPC 2.0 Model Context Protocol (MCP) Gateway:
-    1. 'initialize': Returns server capabilities & protocol version.
-    2. 'tools/list': Dynamically exposes filtered tool surface based on agent's active mandate.
-    3. 'tools/call': Intercepts invocation, strictly validates arguments against schema without silent modification, routes through Mandate Policy Engine, and dispatches to Razorpay Test Mode.
+    1. Authoritative Caller Authentication: X-Agent-Key or Authorization Bearer token validated against database.
+    2. Identity Mismatch Prevention: If both Key and X-Agent-Id are provided, strictly verify that the key derives the exact specified agent ID.
+    3. Dynamic Tool Filtering ('tools/list'): Slashes tool catalog down to authorized subset.
+    4. Guarded Tool Dispatch ('tools/call'): Enforces strict schema validation, routes through Mandate Policy Engine, and dispatches to Razorpay Test Mode.
     """
-    # 1. Authenticate Agent & Resolve Active Mandate
-    agent = await db.get(Agent, x_agent_id)
-    if not agent:
+    # 1. Authoritative Agent Authentication & Identity Resolution
+    agent: Agent | None = None
+    bearer_token: str | None = None
+    if authorization and authorization.startswith("Bearer "):
+        bearer_token = authorization[7:].strip()
+
+    active_key = x_agent_key or bearer_token
+
+    if active_key:
+        # Look up agent by api_key_hash or direct match
+        key_stmt = select(Agent).where(
+            (Agent.api_key_hash == active_key)
+            | (Agent.api_key_hash == f"hash_{active_key}")
+            | (Agent.id == active_key)
+        )
+        key_res = await db.execute(key_stmt)
+        agent = key_res.scalars().first()
+
+        if not agent:
+            return MCPJsonRpcResponse(
+                id=request_payload.id,
+                error={"code": -32001, "message": "Invalid or unauthorized Agent API Key"},
+            )
+
+        # Prevent identity mismatch if X-Agent-Id is also specified
+        if x_agent_id and agent.id != x_agent_id:
+            return MCPJsonRpcResponse(
+                id=request_payload.id,
+                error={
+                    "code": -32001,
+                    "message": f"Agent identity mismatch: Key derives agent '{agent.id}', but X-Agent-Id requested '{x_agent_id}'",
+                },
+            )
+    elif x_agent_id:
+        # Compatibility / Demo Path
+        agent = await db.get(Agent, x_agent_id)
+        if not agent:
+            return MCPJsonRpcResponse(
+                id=request_payload.id,
+                error={"code": -32001, "message": f"Agent '{x_agent_id}' not found or unauthenticated"},
+            )
+    else:
         return MCPJsonRpcResponse(
             id=request_payload.id,
-            error={"code": -32001, "message": f"Agent '{x_agent_id}' not found or unauthenticated"},
+            error={
+                "code": -32001,
+                "message": "Missing authentication: Provide X-Agent-Key, Authorization Bearer token, or X-Agent-Id header",
+            },
         )
 
     mandate_stmt = (
@@ -159,6 +208,7 @@ async def handle_mcp_jsonrpc_gateway(
                 "message": f"Agent '{agent.name}' has no active financial mandate",
             },
         )
+
 
     # 2. Handle MCP Methods
     if request_payload.method == "initialize":

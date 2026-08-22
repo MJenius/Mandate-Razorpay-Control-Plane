@@ -458,16 +458,41 @@ export default function DelegationGraphPage() {
                 <label className="text-slate-300 font-medium block mb-1">Parent Mandate Authority</label>
                 <select
                   value={selectedParentId}
-                  onChange={(e) => setSelectedParentId(e.target.value)}
+                  onChange={(e) => {
+                    const nextParentId = e.target.value;
+                    setSelectedParentId(nextParentId);
+                    const p = mandates.find((m) => m.id === nextParentId);
+                    if (p) {
+                      const maxOp = p.max_amount_per_op / 100;
+                      const avail = Math.max(0, (p.aggregate_spend_limit - p.current_aggregate_spend - p.delegated_child_budget_allocated) / 100);
+                      setDelegatePerOpInr(Math.min(delegatePerOpInr, maxOp));
+                      setDelegateAggregateInr(Math.min(delegateAggregateInr, avail > 0 ? avail : maxOp));
+                      if (p.allowed_operations?.length) {
+                        setDelegateOps([p.allowed_operations[0]]);
+                      }
+                    }
+                  }}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white font-mono"
                   required
                 >
                   {rootNodes.map((p) => (
                     <option key={p.id} value={p.id}>
-                      {p.id} — {p.agent_name} (Cap: ₹{(p.max_amount_per_op / 100).toLocaleString()})
+                      {p.id} — {p.agent_name} (Cap: ₹{(p.max_amount_per_op / 100).toLocaleString("en-IN")})
                     </option>
                   ))}
                 </select>
+                {(() => {
+                  const parent = mandates.find((m) => m.id === selectedParentId);
+                  if (!parent) return null;
+                  const maxOp = parent.max_amount_per_op / 100;
+                  const avail = Math.max(0, (parent.aggregate_spend_limit - parent.current_aggregate_spend - parent.delegated_child_budget_allocated) / 100);
+                  return (
+                    <div className="mt-1.5 p-2 rounded-lg bg-slate-900/80 border border-slate-800 text-[10px] text-slate-400 font-mono flex items-center justify-between">
+                      <span>Parent Per-Op Cap: <strong className="text-white">₹{maxOp.toLocaleString("en-IN")}</strong></span>
+                      <span>Available Sub-Pool: <strong className="text-emerald-400">₹{avail.toLocaleString("en-IN")}</strong></span>
+                    </div>
+                  );
+                })()}
               </div>
 
               <div>
@@ -488,27 +513,108 @@ export default function DelegationGraphPage() {
 
               <div className="grid grid-cols-2 gap-3.5">
                 <div>
-                  <label className="text-slate-300 font-medium block mb-1">Per-Op Ceiling (₹ INR)</label>
-                  <input
-                    type="number"
-                    value={delegatePerOpInr}
-                    onChange={(e) => setDelegatePerOpInr(Number(e.target.value))}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white font-mono"
-                    required
-                  />
-                  <span className="text-[10px] text-slate-500 mt-1 block">Must be ≤ parent per-op limit</span>
+                  {(() => {
+                    const parent = mandates.find((m) => m.id === selectedParentId);
+                    const parentMax = parent ? parent.max_amount_per_op / 100 : 25000;
+                    const isExceeded = delegatePerOpInr > parentMax;
+                    return (
+                      <>
+                        <label className="text-slate-300 font-medium block mb-1">
+                          Per-Op Ceiling (₹ INR)
+                        </label>
+                        <input
+                          type="number"
+                          value={delegatePerOpInr}
+                          onChange={(e) => setDelegatePerOpInr(Number(e.target.value))}
+                          max={parentMax}
+                          min={1}
+                          className={`w-full bg-slate-950 border rounded-xl px-3.5 py-2.5 text-white font-mono ${
+                            isExceeded ? "border-rose-500 text-rose-300" : "border-slate-800"
+                          }`}
+                          required
+                        />
+                        <span className={`text-[10px] mt-1 block font-mono ${isExceeded ? "text-rose-400 font-bold" : "text-slate-500"}`}>
+                          {isExceeded
+                            ? `⚠️ Exceeds parent cap (₹${parentMax.toLocaleString()})`
+                            : `Must be ≤ parent cap (₹${parentMax.toLocaleString()})`}
+                        </span>
+                      </>
+                    );
+                  })()}
                 </div>
 
                 <div>
-                  <label className="text-slate-300 font-medium block mb-1">Sub-Budget Limit (₹ INR)</label>
-                  <input
-                    type="number"
-                    value={delegateAggregateInr}
-                    onChange={(e) => setDelegateAggregateInr(Number(e.target.value))}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white font-mono"
-                    required
-                  />
-                  <span className="text-[10px] text-slate-500 mt-1 block">Must be ≤ parent available pool</span>
+                  {(() => {
+                    const parent = mandates.find((m) => m.id === selectedParentId);
+                    const parentPool = parent
+                      ? Math.max(0, (parent.aggregate_spend_limit - parent.current_aggregate_spend - parent.delegated_child_budget_allocated) / 100)
+                      : 100000;
+                    const isExceeded = delegateAggregateInr > (parentPool > 0 ? parentPool : 100000);
+                    return (
+                      <>
+                        <label className="text-slate-300 font-medium block mb-1">
+                          Sub-Budget Limit (₹ INR)
+                        </label>
+                        <input
+                          type="number"
+                          value={delegateAggregateInr}
+                          onChange={(e) => setDelegateAggregateInr(Number(e.target.value))}
+                          max={parentPool > 0 ? parentPool : undefined}
+                          min={1}
+                          className={`w-full bg-slate-950 border rounded-xl px-3.5 py-2.5 text-white font-mono ${
+                            isExceeded ? "border-rose-500 text-rose-300" : "border-slate-800"
+                          }`}
+                          required
+                        />
+                        <span className={`text-[10px] mt-1 block font-mono ${isExceeded ? "text-rose-400 font-bold" : "text-slate-500"}`}>
+                          {isExceeded
+                            ? `⚠️ Exceeds available pool (₹${parentPool.toLocaleString()})`
+                            : `Must be ≤ pool (₹${parentPool.toLocaleString()})`}
+                        </span>
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-slate-300 font-medium block mb-1.5">Authorized Operations Whitelist</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    "CREATE_ORDER",
+                    "CREATE_PAYMENT_LINK",
+                    "CREATE_REFUND",
+                  ].map((op) => {
+                    const parent = mandates.find((m) => m.id === selectedParentId);
+                    const isAllowedByParent = !parent || !parent.allowed_operations || parent.allowed_operations.includes(op);
+                    const isSelected = delegateOps.includes(op);
+
+                    return (
+                      <button
+                        type="button"
+                        key={op}
+                        disabled={!isAllowedByParent}
+                        onClick={() => {
+                          if (isSelected) {
+                            setDelegateOps(delegateOps.filter((o) => o !== op));
+                          } else {
+                            setDelegateOps([...delegateOps, op]);
+                          }
+                        }}
+                        className={`p-2.5 rounded-xl border text-left text-[11px] font-mono transition-all ${
+                          !isAllowedByParent
+                            ? "opacity-40 bg-slate-950 border-slate-900 text-slate-600 cursor-not-allowed"
+                            : isSelected
+                            ? "bg-blue-600/15 border-blue-500 text-blue-300 font-bold"
+                            : "bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700"
+                        }`}
+                      >
+                        {isSelected ? "✓ " : "+ "}
+                        {op}
+                        {!isAllowedByParent && " (Not in parent)"}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -522,7 +628,18 @@ export default function DelegationGraphPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={actionLoading === "delegate"}
+                  disabled={
+                    actionLoading === "delegate" ||
+                    Boolean(
+                      (() => {
+                        const parent = mandates.find((m) => m.id === selectedParentId);
+                        if (!parent) return false;
+                        const maxOp = parent.max_amount_per_op / 100;
+                        const pool = (parent.aggregate_spend_limit - parent.current_aggregate_spend - parent.delegated_child_budget_allocated) / 100;
+                        return delegatePerOpInr > maxOp || (pool > 0 && delegateAggregateInr > pool);
+                      })()
+                    )
+                  }
                   className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-md shadow-blue-600/20 disabled:opacity-50"
                 >
                   {actionLoading === "delegate" ? "Delegating..." : "Confirm Sub-Delegation"}

@@ -229,33 +229,35 @@ export default function PoliciesPage() {
 
         {/* Input Parameters Form */}
         <form onSubmit={handleRunPolicyTest} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs font-sans">
-          <div>
-            <label className="text-slate-400 block mb-1 font-mono">Agent ID</label>
+          <div className="sm:col-span-2">
+            <label className="text-slate-400 block mb-1 font-mono">Authorized Agent & Bound Mandate</label>
             <select
-              value={testAgentId}
-              onChange={(e) => setTestAgentId(e.target.value)}
+              value={`${testAgentId}::${testMandateId}`}
+              onChange={(e) => {
+                const [agId, mndId] = e.target.value.split("::");
+                setTestAgentId(agId);
+                setTestMandateId(mndId);
+                const m = mandates.find((item) => item.id === mndId);
+                if (m?.allowed_operations?.length) {
+                  setTestOpType(m.allowed_operations[0]);
+                }
+              }}
               className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono"
             >
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name} ({a.id})
+              {mandates.map((m) => {
+                const a = agents.find((ag) => ag.id === m.agent_id);
+                const agentName = a ? a.name : m.agent_id;
+                return (
+                  <option key={m.id} value={`${m.agent_id}::${m.id}`}>
+                    {agentName} ({m.agent_id}) ⇄ {m.id} (Cap: ₹{(m.max_amount_per_op / 100).toLocaleString("en-IN")})
+                  </option>
+                );
+              })}
+              {mandates.length === 0 && (
+                <option value="agt_shopping_parent_01::mnd_parent_root_01">
+                  Primary Shopping Agent ⇄ mnd_parent_root_01
                 </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="text-slate-400 block mb-1 font-mono">Mandate ID</label>
-            <select
-              value={testMandateId}
-              onChange={(e) => setTestMandateId(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono"
-            >
-              {mandates.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.id} (Cap: ₹{(m.max_amount_per_op / 100).toLocaleString()})
-                </option>
-              ))}
+              )}
             </select>
           </div>
 

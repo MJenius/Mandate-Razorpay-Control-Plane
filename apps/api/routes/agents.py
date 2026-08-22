@@ -45,23 +45,30 @@ async def register_agent(
     db: AsyncSession = Depends(get_db_session),
 ) -> Agent:
     """Register a new AI Agent bound to a principal owner."""
+    # 1. Resolve or Auto-Provision Principal Owner
     principal = await db.get(Principal, payload.owner_id)
     if not principal:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Principal owner '{payload.owner_id}' not found",
-        )
+        principal = await db.get(Principal, "prn_demo_merchant_01")
+        if not principal:
+            principal = Principal(
+                id=payload.owner_id or "prn_demo_merchant_01",
+                name="Alpha Commerce Enterprise",
+                email="admin@alphacommerce.example",
+            )
+            db.add(principal)
+            await db.flush()
 
     raw_api_key = f"ag_key_{uuid.uuid4().hex}"
     api_key_hash = hashlib.sha256(raw_api_key.encode()).hexdigest()
 
     agent = Agent(
         name=payload.name,
-        description=payload.description,
-        owner_id=payload.owner_id,
+        description=payload.description or f"Autonomous {payload.agent_type.lower()} agent",
+        agent_type=(payload.agent_type or "SHOPPING").upper(),
+        owner_id=principal.id,
         status=AgentStatus.ACTIVE,
         api_key_hash=api_key_hash,
-        metadata_json=payload.metadata_json,
+        metadata_json=payload.metadata_json or {},
     )
     db.add(agent)
     await db.flush()

@@ -28,6 +28,7 @@ import ErrorState from "@/components/common/ErrorState";
 export default function MandatesPage() {
   const toast = useToast();
   const [mandates, setMandates] = useState<Mandate[]>([]);
+  const [agents, setAgents] = useState<{ id: string; name: string; agent_type: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
@@ -35,6 +36,7 @@ export default function MandatesPage() {
 
   // Modals & Dialogs state
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [customAgentInput, setCustomAgentInput] = useState(false);
   const [confirmState, setConfirmState] = useState<{
     isOpen: boolean;
     title: string;
@@ -65,8 +67,15 @@ export default function MandatesPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await api.getMandates();
-      setMandates(data);
+      const [mandatesData, agentsData] = await Promise.all([
+        api.getMandates(),
+        api.getAgents().catch(() => []),
+      ]);
+      setMandates(mandatesData);
+      setAgents(agentsData);
+      if (agentsData.length > 0 && !newAgentId) {
+        setNewAgentId(agentsData[0].id);
+      }
       setLastUpdated(new Date().toLocaleTimeString());
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load financial mandates");
@@ -378,15 +387,27 @@ export default function MandatesPage() {
 
             <form onSubmit={handleCreateMandate} className="space-y-4 text-xs font-sans">
               <div>
-                <label className="text-slate-300 font-medium block mb-1.5">Target AI Agent ID</label>
-                <input
-                  type="text"
+                <label className="text-slate-300 font-medium block mb-1.5">Target AI Agent</label>
+                <select
                   value={newAgentId}
                   onChange={(e) => setNewAgentId(e.target.value)}
-                  placeholder="e.g. agt_shopping_parent_01"
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white font-mono focus:outline-none focus:border-blue-500"
                   required
-                />
+                >
+                  {agents.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name} ({a.id})
+                    </option>
+                  ))}
+                  {agents.length === 0 && (
+                    <option value="agt_shopping_parent_01">
+                      Primary Shopping Agent (agt_shopping_parent_01)
+                    </option>
+                  )}
+                </select>
+                <span className="text-[10px] text-slate-500 mt-1 block">
+                  Select the autonomous AI agent authorized by this financial contract.
+                </span>
               </div>
 
               <div className="grid grid-cols-2 gap-3.5">

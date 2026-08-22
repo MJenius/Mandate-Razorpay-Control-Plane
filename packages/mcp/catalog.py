@@ -430,32 +430,51 @@ def get_filtered_mcp_tools(agent: Agent, mandate: Mandate) -> list[dict[str, Any
     """
     Dynamic MCP Tool Filtering:
     Filters the registered Razorpay MCP tool surface down to the exact subset authorized
-    by the calling AI Agent's active financial mandate.
+    by the calling AI Agent's active financial mandate and allowed operations.
     """
-    filtered_tools: list[dict[str, Any]] = []
+    allowed_ops = set(mandate.allowed_operations or [])
 
+    # Map allowed operations to permitted functional categories
+    allowed_categories = set()
+    if "CREATE_ORDER" in allowed_ops:
+        allowed_categories.add("ORDERS")
+    if "CREATE_PAYMENT_LINK" in allowed_ops or "CANCEL_PAYMENT_LINK" in allowed_ops:
+        allowed_categories.add("PAYMENT_LINKS")
+    if "CREATE_REFUND" in allowed_ops:
+        allowed_categories.add("REFUNDS")
+    if "CREATE_INVOICE" in allowed_ops:
+        allowed_categories.add("INVOICES")
+    if "CREATE_SUBSCRIPTION" in allowed_ops:
+        allowed_categories.add("SUBSCRIPTIONS")
+    if "PAYOUTS" in allowed_ops:
+        allowed_categories.add("PAYOUTS")
+    if "SETTLEMENTS" in allowed_ops:
+        allowed_categories.add("SETTLEMENTS")
+
+    # Fallback by agent type if operations list is empty
+    if not allowed_categories and agent.agent_type == "SHOPPING":
+        allowed_categories.update({"ORDERS", "PAYMENT_LINKS"})
+    elif not allowed_categories and agent.agent_type == "PROCUREMENT":
+        allowed_categories.add("ORDERS")
+    elif not allowed_categories and agent.agent_type == "SUPPORT":
+        allowed_categories.add("REFUNDS")
+
+    filtered_tools: list[dict[str, Any]] = []
     for _tool_name, tool_def in RAZORPAY_MCP_TOOL_REGISTRY.items():
+        category = tool_def.get("category", "")
         op_type = tool_def.get("operation_type")
 
-        # 1. Read-only informative tools:
-        if op_type is None:
-            # Sensitive categories (e.g. PAYOUTS, SETTLEMENTS) require explicit permission in mandate
-            if tool_def["category"] == "PAYOUTS":
-                if "PAYOUTS" in mandate.allowed_operations:
-                    filtered_tools.append(tool_def)
-            elif tool_def["category"] == "SETTLEMENTS":
-                if "SETTLEMENTS" in mandate.allowed_operations or agent.agent_type in [
-                    "FINANCE",
-                    "ADMIN",
-                ]:
-                    filtered_tools.append(tool_def)
-            else:
-                filtered_tools.append(tool_def)
+        # Category level gate
+        if category not in allowed_categories:
             continue
 
-        # 2. Mutating financial tools:
-        op_str = op_type.value if hasattr(op_type, "value") else str(op_type)
-        if op_str in mandate.allowed_operations:
-            filtered_tools.append(tool_def)
+        # Mutating tool operation type gate
+        if op_type is not None:
+            op_str = op_type.value if hasattr(op_type, "value") else str(op_type)
+            if op_str not in allowed_ops:
+                continue
+
+        filtered_tools.append(tool_def)
 
     return filtered_tools
+

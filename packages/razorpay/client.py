@@ -113,6 +113,60 @@ class RazorpayClient:
             "Content-Type": "application/json",
         }
 
+    async def _request_with_retry(
+        self,
+        method: str,
+        path: str,
+        json_data: dict[str, Any] | None = None,
+        is_idempotent: bool = False,
+        max_retries: int = 3,
+    ) -> dict[str, Any]:
+        """
+        Executes HTTP request against Razorpay REST API.
+        Strict Retries Invariant: Only retry genuinely idempotent operations (GET requests or mutations with explicit idempotency key / receipt). Never blindly retry naked financial mutations.
+        """
+        import asyncio
+        import random
+
+        url = f"{self.base_url}{path}"
+        attempts = max_retries if is_idempotent else 1
+
+        for attempt in range(1, attempts + 1):
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    if method.upper() == "GET":
+                        resp = await client.get(url, headers=self._auth_header)
+                    elif method.upper() == "POST":
+                        resp = await client.post(url, json=json_data, headers=self._auth_header)
+                    else:
+                        resp = await client.request(method, url, json=json_data, headers=self._auth_header)
+
+                    data = resp.json()
+                    return data if isinstance(data, dict) else {"data": data}
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.HTTPStatusError) as exc:
+                is_retryable_status = (
+                    isinstance(exc, httpx.HTTPStatusError)
+                    and exc.response.status_code in {429, 500, 502, 503, 504}
+                )
+                is_network_or_timeout = isinstance(exc, (httpx.TimeoutException, httpx.NetworkError))
+
+                if is_idempotent and attempt < attempts and (is_retryable_status or is_network_or_timeout):
+                    backoff = (0.2 * (2**attempt)) + random.uniform(0.05, 0.15)
+                    logger.warning(
+                        "razorpay_transient_error_retrying",
+                        path=path,
+                        attempt=attempt,
+                        backoff_seconds=round(backoff, 2),
+                        error=str(exc),
+                    )
+                    await asyncio.sleep(backoff)
+                    continue
+
+                logger.error("razorpay_request_failed", path=path, attempt=attempt, is_idempotent=is_idempotent, error=str(exc))
+                raise
+
+        raise RuntimeError(f"Failed all {attempts} attempts for {method} {path}")
+
     # ========================================================
     # Orders Subsystem
     # ========================================================
@@ -123,6 +177,8 @@ class RazorpayClient:
             "creating_razorpay_order", amount=req.amount, currency=req.currency, mock=self.mock_mode
         )
 
+        receipt_key = req.receipt or f"rcpt_{uuid.uuid4().hex[:8]}"
+
         if self.mock_mode:
             order_id = f"order_mock_{uuid.uuid4().hex[:14]}"
             return RazorpayOrderResponse(
@@ -130,7 +186,7 @@ class RazorpayClient:
                 amount=req.amount,
                 amount_due=req.amount,
                 currency=req.currency,
-                receipt=req.receipt or f"rcpt_{uuid.uuid4().hex[:8]}",
+                receipt=receipt_key,
                 status="created",
                 notes=req.notes,
                 created_at=int(time.time()),
@@ -139,20 +195,14 @@ class RazorpayClient:
         payload: dict[str, Any] = {
             "amount": req.amount,
             "currency": req.currency,
-            "receipt": req.receipt or f"rcpt_{uuid.uuid4().hex[:8]}",
+            "receipt": receipt_key,
             "notes": req.notes,
             "partial_payment": req.partial_payment,
         }
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                f"{self.base_url}/orders",
-                json=payload,
-                headers=self._auth_header,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return RazorpayOrderResponse(**data)
+        # Order creation is idempotent because receipt is guaranteed unique
+        data = await self._request_with_retry("POST", "/orders", json_data=payload, is_idempotent=bool(req.receipt))
+        return RazorpayOrderResponse(**data)
 
     async def fetch_order(self, order_id: str) -> RazorpayOrderResponse:
         import time
@@ -170,13 +220,10 @@ class RazorpayClient:
                 created_at=int(time.time()),
             )
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(
-                f"{self.base_url}/orders/{order_id}",
-                headers=self._auth_header,
-            )
-            resp.raise_for_status()
-            return RazorpayOrderResponse(**resp.json())
+        # Fetch is idempotent GET
+        data = await self._request_with_retry("GET", f"/orders/{order_id}", is_idempotent=True)
+        return RazorpayOrderResponse(**data)
+
 
     # ========================================================
     # Payments Subsystem
@@ -196,13 +243,8 @@ class RazorpayClient:
                 created_at=int(time.time()),
             )
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(
-                f"{self.base_url}/payments/{payment_id}",
-                headers=self._auth_header,
-            )
-            resp.raise_for_status()
-            return RazorpayPaymentResponse(**resp.json())
+        data = await self._request_with_retry("GET", f"/payments/{payment_id}", is_idempotent=True)
+        return RazorpayPaymentResponse(**data)
 
     async def capture_payment(
         self, payment_id: str, amount: int, currency: str = "INR"
@@ -223,14 +265,9 @@ class RazorpayClient:
                 created_at=int(time.time()),
             )
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                f"{self.base_url}/payments/{payment_id}/capture",
-                json={"amount": amount, "currency": currency},
-                headers=self._auth_header,
-            )
-            resp.raise_for_status()
-            return RazorpayPaymentResponse(**resp.json())
+        payload = {"amount": amount, "currency": currency}
+        data = await self._request_with_retry("POST", f"/payments/{payment_id}/capture", json_data=payload, is_idempotent=False)
+        return RazorpayPaymentResponse(**data)
 
     # ========================================================
     # Refunds Subsystem
@@ -264,14 +301,8 @@ class RazorpayClient:
         if req.amount is not None:
             payload["amount"] = req.amount
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                f"{self.base_url}/payments/{req.payment_id}/refund",
-                json=payload,
-                headers=self._auth_header,
-            )
-            resp.raise_for_status()
-            return RazorpayRefundResponse(**resp.json())
+        data = await self._request_with_retry("POST", f"/payments/{req.payment_id}/refund", json_data=payload, is_idempotent=False)
+        return RazorpayRefundResponse(**data)
 
     async def fetch_refund(self, refund_id: str) -> RazorpayRefundResponse:
         import time
@@ -289,13 +320,8 @@ class RazorpayClient:
                 created_at=int(time.time()),
             )
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(
-                f"{self.base_url}/refunds/{refund_id}",
-                headers=self._auth_header,
-            )
-            resp.raise_for_status()
-            return RazorpayRefundResponse(**resp.json())
+        data = await self._request_with_retry("GET", f"/refunds/{refund_id}", is_idempotent=True)
+        return RazorpayRefundResponse(**data)
 
     # ========================================================
     # Payment Links Subsystem
@@ -332,23 +358,16 @@ class RazorpayClient:
                 "contact": req.customer_contact or "",
             }
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                f"{self.base_url}/payment_links",
-                json=payload,
-                headers=self._auth_header,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return RazorpayPaymentLinkResponse(
-                id=data["id"],
-                short_url=data.get("short_url", f"https://rzp.io/i/{data['id']}"),
-                status=data.get("status", "created"),
-                amount=data.get("amount", req.amount),
-                currency=data.get("currency", req.currency),
-                description=data.get("description", req.description),
-                created_at=data.get("created_at", int(time.time())),
-            )
+        data = await self._request_with_retry("POST", "/payment_links", json_data=payload, is_idempotent=False)
+        return RazorpayPaymentLinkResponse(
+            id=data["id"],
+            short_url=data.get("short_url", f"https://rzp.io/i/{data['id']}"),
+            status=data.get("status", "created"),
+            amount=data.get("amount", req.amount),
+            currency=data.get("currency", req.currency),
+            description=data.get("description", req.description),
+            created_at=data.get("created_at", int(time.time())),
+        )
 
     async def fetch_payment_link(self, link_id: str) -> RazorpayPaymentLinkResponse:
         import time
@@ -366,22 +385,16 @@ class RazorpayClient:
                 created_at=int(time.time()),
             )
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(
-                f"{self.base_url}/payment_links/{link_id}",
-                headers=self._auth_header,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return RazorpayPaymentLinkResponse(
-                id=data["id"],
-                short_url=data.get("short_url", f"https://rzp.io/i/{data['id']}"),
-                status=data.get("status", "created"),
-                amount=data.get("amount", 0),
-                currency=data.get("currency", "INR"),
-                description=data.get("description", ""),
-                created_at=data.get("created_at", int(time.time())),
-            )
+        data = await self._request_with_retry("GET", f"/payment_links/{link_id}", is_idempotent=True)
+        return RazorpayPaymentLinkResponse(
+            id=data["id"],
+            short_url=data.get("short_url", f"https://rzp.io/i/{data['id']}"),
+            status=data.get("status", "created"),
+            amount=data.get("amount", 0),
+            currency=data.get("currency", "INR"),
+            description=data.get("description", ""),
+            created_at=data.get("created_at", int(time.time())),
+        )
 
     async def cancel_payment_link(self, link_id: str) -> RazorpayPaymentLinkResponse:
         import time
@@ -399,22 +412,16 @@ class RazorpayClient:
                 created_at=int(time.time()),
             )
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(
-                f"{self.base_url}/payment_links/{link_id}/cancel",
-                headers=self._auth_header,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return RazorpayPaymentLinkResponse(
-                id=data["id"],
-                short_url=data.get("short_url", f"https://rzp.io/i/{data['id']}"),
-                status=data.get("status", "cancelled"),
-                amount=data.get("amount", 0),
-                currency=data.get("currency", "INR"),
-                description=data.get("description", ""),
-                created_at=data.get("created_at", int(time.time())),
-            )
+        data = await self._request_with_retry("POST", f"/payment_links/{link_id}/cancel", is_idempotent=True)
+        return RazorpayPaymentLinkResponse(
+            id=data["id"],
+            short_url=data.get("short_url", f"https://rzp.io/i/{data['id']}"),
+            status=data.get("status", "cancelled"),
+            amount=data.get("amount", 0),
+            currency=data.get("currency", "INR"),
+            description=data.get("description", ""),
+            created_at=data.get("created_at", int(time.time())),
+        )
 
     # ========================================================
     # Signatures & Webhook Verification
@@ -461,3 +468,4 @@ class RazorpayClient:
         ).hexdigest()
 
         return hmac.compare_digest(generated_signature, signature)
+

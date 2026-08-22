@@ -85,15 +85,9 @@ services:
     container_name: mandate-web
     ports:
       - "3000:3000"
-    volumes:
-      - ./apps/web:/app
-      - /app/node_modules
-      - /app/.next
     environment:
-      - NODE_ENV=development
+      - NODE_ENV=production
       - NEXT_PUBLIC_API_URL=http://localhost:8000
-      - WATCHPACK_POLLING=true
-      - CHOKIDAR_USEPOLLING=true
     depends_on:
       api:
         condition: service_healthy
