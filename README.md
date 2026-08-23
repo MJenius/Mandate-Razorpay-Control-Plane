@@ -3,7 +3,7 @@
 > **Financial authorization and control plane for AI agents operating through Razorpay APIs & MCP.**
 
 [![CI/CD](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
-[![Tests](https://img.shields.io/badge/tests-57%20passed%20%7C%201%20skipped-success.svg)]()
+[![Tests](https://img.shields.io/badge/tests-61%20passed%20%7C%201%20skipped-success.svg)]()
 [![Evidence Suite](https://img.shields.io/badge/evidence%20claims-8%2F8%20verified-brightgreen.svg)]()
 [![Benchmark](https://img.shields.io/badge/empirical%20eval-1%2C144%20hostile%20blocked%20%7C%20100%25-blue.svg)]()
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)]()
@@ -38,7 +38,7 @@ graph TD
     subgraph Mandate Control Plane
         MCP -->|"1. Dynamic Tool Surface Filtering (25+ → 2–3 Tools)"| Filter["Filter Tools"]
         Filter -->|"2. Authoritative Key Authentication"| Identity["Resolve Agent & Mandate"]
-        Identity -->|"3. Policy Check"| Engine["Deterministic Policy Engine (8 Sequential Rules)"]
+        Identity -->|"3. Policy Check"| Engine["Deterministic Policy Engine (9 Sequential Rules)"]
         
         Engine -->|Rule 1-5: Integrity & Delegation| R1["Agent / DAG / Currency Checks"]
         R1 -->|Rule 6-7: Budget Bounds| R2["Per-Op Cap & Aggregate Budget CAS Lock"]
@@ -67,13 +67,13 @@ graph TD
 
 ## 3. Key Performance & Security Metrics
 
-All metrics below are strictly measured and validated against canonical empirical artifacts ([`BENCHMARK_REPORT.md`](file:///BENCHMARK_REPORT.md)):
+Measured local PostgreSQL contention results and their exact reproduction command are in [`BENCHMARK_REPORT.md`](BENCHMARK_REPORT.md). Authorization evaluation figures below are deterministic simulated scenarios, not production traffic.
 
 | Metric | Measured Value (`N=1,430` Scenarios) | Invariant Guarantee |
 | :--- | :---: | :--- |
 | **Hostile Action Block Rate** | **100.0%** (1,144 / 1,144) | 100% of malicious prompt injections, overreaches, and forged refunds intercepted synchronously. |
 | **Unauthorized Razorpay Effects** | **0** | Strict **Zero-Gateway-Dispatch Invariant**: blocked actions make 0 API requests to Razorpay. |
-| **Authorization Overhead (P50 / P95 / P99)** | **25.25 ms / 490.85 ms / 491.01 ms** (mean: **82.95 ms**) | Synchronous in-memory deterministic enforcement without slowing customer checkout. |
+| **PostgreSQL reservation invariant** | **12 local trials, 0 overspend** | Shared-budget contention at 100, 200, and 500 concurrent attempts remained within the mandate limit. |
 | **False Positive Rate (FPR)** | **0.0%** (0 / 286) | Zero customer friction on legitimate commerce operations within granted mandate limits. |
 | **Counterfactual Loss Prevented** | **₹32,17,50,000.00** | ₹32.17 Crore enterprise capital protected across 1,144 simulated adversarial vectors. |
 

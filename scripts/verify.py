@@ -157,11 +157,15 @@ async def check_database_readiness_probe() -> tuple[bool, bool, str]:
 
 
 def run_mypy_type_checking(root_dir: str) -> bool:
-    print_banner("3/7: Running MyPy Strict Static Type Safety Check")
-    passed, _ = run_command(
+    print_banner("3/7: Running Lint and MyPy Static Type Safety Checks")
+    lint_passed, _ = run_command(
+        [sys.executable, "-m", "ruff", "check", "packages/core", "packages/policy", "packages/shared", "--ignore", "C901"],
+        cwd=root_dir,
+    )
+    type_passed, _ = run_command(
         [sys.executable, "-m", "mypy", "apps", "packages", "services"], cwd=root_dir
     )
-    return passed
+    return lint_passed and type_passed
 
 
 def run_pytest_suite(root_dir: str) -> tuple[bool, int, int]:
@@ -193,14 +197,7 @@ def validate_benchmark_artifact(root_dir: str) -> bool:
     with open(benchmark_file, "r", encoding="utf-8") as f:
         content = f.read()
 
-    required_tokens = [
-        "1,144",
-        "100.0%",
-        "0.0%",
-        "₹32,17,50,000",
-        "Hostile Action Block Rate",
-        "Policy Bypass Rate",
-    ]
+    required_tokens = ["PostgreSQL concurrency evaluation", "PASS — ZERO OVERSPEND", "Reproduction commands"]
     for token in required_tokens:
         if token not in content:
             print(f"[FAILED] Benchmark artifact missing required invariant token: '{token}'")
@@ -292,9 +289,9 @@ def main() -> int:
         print(f"\n[SUCCESS] ALL MANDATE VERIFICATION CHECKS PASSED in {overall_elapsed}s!")
         print("  - [PASS] PostgreSQL: connected & operational (Live Integration Mode)")
         print("  - [PASS] Redis: connected & operational")
-        print("  - [PASS] Static Type Safety: MyPy 0 Errors across all modules")
+        print("  - [PASS] Lint and static type safety checks")
         print(f"  - [PASS] Backend Test Suite: {passed_count} Passed | {skipped_count} Skipped (all mandatory invariants verified; 1 external live OpenAI quota test skipped)")
-        print("  - [PASS] Benchmark Integrity: N=1,430 Scenarios / 1,144 Hostile (100% Hostile Block Rate, 0% Bypass, 0% FPR)")
+        print("  - [PASS] Benchmark report: local PostgreSQL evidence and reproduction commands present")
         print("  - [PASS] Frontend Dashboard: Next.js Production Bundle Built Cleanly (15/15 Pages)")
         print(f"  - [PASS] API Probes: /health ({h_status}) & /ready ({r_status}) Responding Correctly")
         print("  - SYSTEM STATUS: SUBMISSION READY\n")

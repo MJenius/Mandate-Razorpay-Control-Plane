@@ -113,3 +113,7 @@ logs/
 tmp/
 temp/
 scratch/
+
+# Reproducible local benchmark output (keep the directory, not generated measurements)
+benchmarks/results/*
+!benchmarks/results/.gitkeep
