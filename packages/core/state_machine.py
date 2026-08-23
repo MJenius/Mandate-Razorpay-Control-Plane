@@ -19,17 +19,28 @@ class InvalidStateTransitionError(Exception):
 
 class FinancialOperationStateMachine:
     """
-    Strict State Transition Matrix for Financial Operations:
+    Formal Financial Operation State Machine Matrix:
 
-    INITIATED -> [POLICY_APPROVED, POLICY_REJECTED, REQUIRES_APPROVAL, FAILED]
-    REQUIRES_APPROVAL -> [RESERVED, POLICY_REJECTED, CANCELLED, FAILED]
-    POLICY_APPROVED -> [RESERVED, FAILED, CANCELLED]
-    RESERVED -> [EXECUTING, FAILED, CANCELLED]
-    EXECUTING -> [SUCCEEDED, FAILED, CANCELLED]
-    SUCCEEDED -> [] (Terminal State)
-    FAILED -> [] (Terminal State)
-    CANCELLED -> [] (Terminal State)
-    POLICY_REJECTED -> [] (Terminal State)
+    States:
+      - INITIATED: Operation requested by agent, awaiting authentication and deterministic policy check
+      - REQUIRES_APPROVAL: Policy requires human signoff before reservation
+      - POLICY_APPROVED: Policy approved, ready for atomic budget reservation
+      - POLICY_REJECTED: Policy denied operation (Zero-Gateway-Dispatch terminal)
+      - RESERVED: Budget atomically reserved via CAS; ready for gateway dispatch
+      - EXECUTING: Gateway request dispatched, awaiting synchronous response or asynchronous webhook
+      - SUCCEEDED: Gateway confirmed order/payment; budget moved from reserved -> committed (terminal)
+      - FAILED: Gateway rejected or execution aborted; reserved budget atomically released (terminal)
+      - CANCELLED: Human approver or agent aborted operation before gateway execution (terminal)
+
+    Transition Matrix:
+      INITIATED -> [POLICY_APPROVED, POLICY_REJECTED, REQUIRES_APPROVAL, FAILED]
+      REQUIRES_APPROVAL -> [RESERVED, POLICY_REJECTED, CANCELLED, FAILED]
+      POLICY_APPROVED -> [RESERVED, FAILED, CANCELLED]
+      RESERVED -> [EXECUTING, SUCCEEDED (out-of-order webhook), FAILED (gateway 5xx/timeout release), CANCELLED]
+      EXECUTING -> [SUCCEEDED, FAILED, CANCELLED]
+      CANCELLED -> []
+      POLICY_REJECTED -> []
+      RECONCILED -> []
     """
 
     ALLOWED_TRANSITIONS: dict[OperationStatus, set[OperationStatus]] = {
@@ -53,7 +64,7 @@ class FinancialOperationStateMachine:
         OperationStatus.RESERVED: {
             OperationStatus.EXECUTING,
             OperationStatus.SUCCEEDED,  # Direct convergence via out-of-order webhook
-            OperationStatus.FAILED,
+            OperationStatus.FAILED,     # Immediate reservation release on gateway failure
             OperationStatus.CANCELLED,
         },
         OperationStatus.EXECUTING: {
@@ -61,7 +72,7 @@ class FinancialOperationStateMachine:
             OperationStatus.FAILED,
             OperationStatus.CANCELLED,
         },
-        # Terminal states have no valid outgoing transitions
+        # Terminal states have no valid outgoing transitions (re-affirmation is permitted idempotently)
         OperationStatus.SUCCEEDED: set(),
         OperationStatus.FAILED: set(),
         OperationStatus.CANCELLED: set(),

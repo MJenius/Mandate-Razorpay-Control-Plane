@@ -10,6 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.core.enums import AgentStatus, MandateStatus, PolicyDecisionType
 from packages.core.models import Agent, FinancialOperation, Mandate
+from packages.shared.observability import (
+    POLICY_EVALUATION_LATENCY_SECONDS,
+    POLICY_RULE_EVALUATIONS_TOTAL,
+    RATE_LIMIT_REJECTIONS_TOTAL,
+)
 
 
 def ensure_utc(dt: datetime | None) -> datetime | None:
@@ -166,7 +171,6 @@ class HierarchicalDelegationRule(PolicyRule):
     ) -> PolicyRuleDiagnostic:
         start = time.perf_counter()
 
-        # If this is a root mandate (no parent), pass immediately
         if not mandate.parent_mandate_id:
             return PolicyRuleDiagnostic(
                 rule_name=self.name,
@@ -176,7 +180,6 @@ class HierarchicalDelegationRule(PolicyRule):
                 latency_ms=round((time.perf_counter() - start) * 1000, 3),
             )
 
-        # Context session check if available
         db_session: AsyncSession | None = context.get("db") if context else None
         if db_session:
             curr_parent_id: str | None = mandate.parent_mandate_id
@@ -395,6 +398,53 @@ class HumanReviewThresholdRule(PolicyRule):
         )
 
 
+class RateLimitRule(PolicyRule):
+    """Evaluates per-agent sliding-window rate limit using Redis."""
+
+    @property
+    def name(self) -> str:
+        return "RATE_LIMIT_CHECK"
+
+    async def evaluate(
+        self,
+        agent: Agent,
+        mandate: Mandate,
+        operation: FinancialOperation,
+        context: dict[str, Any] | None = None,
+    ) -> PolicyRuleDiagnostic:
+        start = time.perf_counter()
+        from packages.shared.rate_limiter import RedisRateLimiter
+
+        rate_limiter = RedisRateLimiter()
+        limit_res = await rate_limiter.check_rate_limit(agent_id=agent.id, cost=1)
+
+        if not limit_res.allowed:
+            RATE_LIMIT_REJECTIONS_TOTAL.labels(
+                agent_id=agent.id, tier=limit_res.tier
+            ).inc()
+            return PolicyRuleDiagnostic(
+                rule_name=self.name,
+                decision=PolicyDecisionType.DENY,
+                passed=False,
+                reason=limit_res.rejection_reason or "Rate limit exceeded",
+                latency_ms=round((time.perf_counter() - start) * 1000, 3),
+                context={
+                    "limit": limit_res.limit,
+                    "remaining": limit_res.remaining,
+                    "retry_after_seconds": limit_res.retry_after_seconds,
+                },
+            )
+
+        return PolicyRuleDiagnostic(
+            rule_name=self.name,
+            decision=PolicyDecisionType.ALLOW,
+            passed=True,
+            reason="Within rate limit quota",
+            latency_ms=round((time.perf_counter() - start) * 1000, 3),
+            context={"remaining": limit_res.remaining},
+        )
+
+
 class PolicyEngine:
     def __init__(self, rules: list[PolicyRule] | None = None) -> None:
         self.rules: list[PolicyRule] = rules or [
@@ -406,6 +456,7 @@ class PolicyEngine:
             PerTransactionLimitRule(),
             AggregateSpendLimitRule(),
             HumanReviewThresholdRule(),
+            RateLimitRule(),
         ]
 
     async def evaluate(
@@ -426,6 +477,12 @@ class PolicyEngine:
             diag = await rule.evaluate(agent, mandate, operation, context)
             diagnostics.append(diag)
 
+            POLICY_RULE_EVALUATIONS_TOTAL.labels(
+                rule_name=diag.rule_name,
+                decision=diag.decision.value,
+                passed=str(diag.passed),
+            ).inc()
+
             if diag.decision == PolicyDecisionType.DENY:
                 rejection_reasons.append(f"[{diag.rule_name}] {diag.reason}")
                 final_decision = PolicyDecisionType.DENY
@@ -437,6 +494,7 @@ class PolicyEngine:
                 final_decision = PolicyDecisionType.REQUIRE_HUMAN_REVIEW
 
         total_latency = round((time.perf_counter() - start_time) * 1000, 3)
+        POLICY_EVALUATION_LATENCY_SECONDS.observe(total_latency / 1000.0)
 
         return PolicyEvaluationResult(
             decision=final_decision,

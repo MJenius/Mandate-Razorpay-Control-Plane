@@ -29,6 +29,9 @@ jobs:
       - name: Run MyPy Type Checking
         run: mypy apps packages services
 
+      - name: Lint Control-Plane Changes
+        run: ruff check packages/core packages/policy packages/shared --ignore C901
+
       - name: Run Pytest & Coverage
         run: pytest --cov=packages --cov=apps --cov-report=xml
 
@@ -54,4 +57,3 @@ jobs:
       - name: Run Next.js Build
         working-directory: apps/web
         run: npm run build
-

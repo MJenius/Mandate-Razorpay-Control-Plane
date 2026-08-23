@@ -15,6 +15,7 @@ from apps.api.routes.evaluation import router as evaluation_router
 from apps.api.routes.health import router as health_router
 from apps.api.routes.mandates import router as mandates_router
 from apps.api.routes.mcp_gateway import router as mcp_gateway_router
+from apps.api.routes.metrics import router as metrics_router
 from apps.api.routes.operations import router as operations_router
 from apps.api.routes.policies import router as policies_router
 from apps.api.routes.telemetry import router as telemetry_router
@@ -121,6 +122,7 @@ def create_app() -> FastAPI:
 
     # Mount Route Modules
     app.include_router(health_router)
+    app.include_router(metrics_router)
     app.include_router(agents_router, prefix="/api/v1")
     app.include_router(agent_chat_router, prefix="/api/v1")
     app.include_router(mandates_router, prefix="/api/v1")

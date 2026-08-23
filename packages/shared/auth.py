@@ -1,7 +1,6 @@
 """Authoritative Caller Authentication and Principal Resolution for AI Agents."""
 
 import hashlib
-import hmac
 from typing import Any
 
 from fastapi import Depends, Header, HTTPException, status
@@ -132,4 +131,3 @@ async def get_authenticated_agent(
             detail="Unauthorized",
         )
     return agent
-

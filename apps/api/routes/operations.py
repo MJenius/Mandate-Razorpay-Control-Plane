@@ -14,6 +14,7 @@ from packages.core.enums import (
     PolicyDecisionType,
     TransactionStatus,
 )
+from packages.core.concurrency import reserve_budget
 from packages.core.models import Agent, AuditEvent, FinancialOperation, Mandate, Transaction
 from packages.core.schemas import (
     HumanApprovalRequest,
@@ -173,22 +174,7 @@ async def request_financial_operation(
 
     # 5. Policy is ALLOW -> Atomic Budget Reservation via conditional CAS update
     # Ensures strictly zero overspending under high concurrency
-    reserve_stmt = (
-        update(Mandate)
-        .where(
-            Mandate.id == mandate.id,
-            (Mandate.current_aggregate_spend + Mandate.reserved_spend + payload.amount)
-            <= Mandate.aggregate_spend_limit,
-        )
-        .values(
-            reserved_spend=Mandate.reserved_spend + payload.amount,
-            version=Mandate.version + 1,
-        )
-    )
-    reserve_result = await db.execute(reserve_stmt)
-    affected_rows = getattr(reserve_result, "rowcount", -1)
-
-    if affected_rows == 0:
+    if not await reserve_budget(db, mandate.id, payload.amount):
         # Concurrent race condition caught: budget was exhausted by another concurrent thread
         operation.status = OperationStatus.POLICY_REJECTED
         operation.error_message = (
@@ -387,21 +373,7 @@ async def human_approve_operation(
         return operation
 
     # Human sign-off approved -> Reserve budget atomically & dispatch
-    reserve_stmt = (
-        update(Mandate)
-        .where(
-            Mandate.id == mandate.id,
-            (Mandate.current_aggregate_spend + Mandate.reserved_spend + operation.amount)
-            <= Mandate.aggregate_spend_limit,
-        )
-        .values(
-            reserved_spend=Mandate.reserved_spend + operation.amount,
-            version=Mandate.version + 1,
-        )
-    )
-    reserve_result = await db.execute(reserve_stmt)
-    affected_rows = getattr(reserve_result, "rowcount", -1)
-    if affected_rows == 0:
+    if not await reserve_budget(db, mandate.id, operation.amount):
         operation.status = OperationStatus.POLICY_REJECTED
         operation.error_message = "Budget limit exhausted before approval could reserve funds"
         await db.commit()
