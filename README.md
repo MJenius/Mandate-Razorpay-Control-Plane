@@ -5,7 +5,7 @@
 [![CI/CD](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
 [![Tests](https://img.shields.io/badge/tests-57%20passed%20%7C%201%20skipped-success.svg)]()
 [![Evidence Suite](https://img.shields.io/badge/evidence%20claims-8%2F8%20verified-brightgreen.svg)]()
-[![Benchmark](https://img.shields.io/badge/empirical%20eval-1%2C000%20scenarios%20%7C%20100%25%20blocked-blue.svg)]()
+[![Benchmark](https://img.shields.io/badge/empirical%20eval-1%2C144%20hostile%20blocked%20%7C%20100%25-blue.svg)]()
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.14-blue.svg)]()
 [![Next.js](https://img.shields.io/badge/frontend-Next.js%2014-black.svg)]()
@@ -69,13 +69,13 @@ graph TD
 
 All metrics below are strictly measured and validated against canonical empirical artifacts ([`BENCHMARK_REPORT.md`](file:///BENCHMARK_REPORT.md)):
 
-| Metric | Measured Value (`N=1,000`) | Invariant Guarantee |
+| Metric | Measured Value (`N=1,430` Scenarios) | Invariant Guarantee |
 | :--- | :---: | :--- |
-| **Hostile Action Block Rate** | **100.0%** (800 / 800) | 100% of malicious prompt injections, overreaches, and forged refunds intercepted synchronously. |
+| **Hostile Action Block Rate** | **100.0%** (1,144 / 1,144) | 100% of malicious prompt injections, overreaches, and forged refunds intercepted synchronously. |
 | **Unauthorized Razorpay Effects** | **0** | Strict **Zero-Gateway-Dispatch Invariant**: blocked actions make 0 API requests to Razorpay. |
-| **Authorization Overhead (P50 / P95 / P99)** | **6.31 ms / 12.22 ms / 16.13 ms** | Sub-20ms tail latency enables real-time agent execution without slowing customer checkout. |
-| **False Positive Rate (FPR)** | **0.0%** (0 / 200) | Zero customer friction on legitimate commerce operations within granted mandate limits. |
-| **Counterfactual Loss Prevented** | **₹21,85,00,000.00** | ₹21.85 Crore enterprise capital protected across 800 simulated adversarial vectors. |
+| **Authorization Overhead (P50 / P95 / P99)** | **25.25 ms / 490.85 ms / 491.01 ms** (mean: **82.95 ms**) | Synchronous in-memory deterministic enforcement without slowing customer checkout. |
+| **False Positive Rate (FPR)** | **0.0%** (0 / 286) | Zero customer friction on legitimate commerce operations within granted mandate limits. |
+| **Counterfactual Loss Prevented** | **₹32,17,50,000.00** | ₹32.17 Crore enterprise capital protected across 1,144 simulated adversarial vectors. |
 
 ---
 
@@ -152,7 +152,7 @@ Every architectural claim is backed across 4 distinct layers: Implementation Cod
 | **Cascading DAG Revocation** | [`apps/api/routes/mandates.py`](file:///apps/api/routes/mandates.py) | [`tests/test_evidence_claims.py::test_claim_4`](file:///tests/test_evidence_claims.py) | `/delegation` Hierarchy | **Verified** |
 | **Webhook Idempotency & Replay** | [`apps/api/routes/webhooks.py`](file:///apps/api/routes/webhooks.py) | [`tests/test_evidence_claims.py::test_claim_5`](file:///tests/test_evidence_claims.py) | `/operations` Telemetry | **Verified** |
 | **Self-Healing Reconciliation** | [`services/worker/main.py`](file:///services/worker/main.py) | [`tests/test_evidence_claims.py::test_claim_6`](file:///tests/test_evidence_claims.py) | `/operations` & `/demo` (Act 3) | **Verified** |
-| **1,000 Scenarios Benchmark** | [`packages/eval/large_scale_benchmark.py`](file:///packages/eval/large_scale_benchmark.py) | [`tests/test_evidence_claims.py::test_claim_7`](file:///tests/test_evidence_claims.py) | `/eval` Evaluation Lab | **Verified** |
+| **Empirical Adversarial Benchmark** | [`packages/eval/large_scale_benchmark.py`](file:///packages/eval/large_scale_benchmark.py) | [`tests/test_evidence_claims.py::test_claim_7`](file:///tests/test_evidence_claims.py) | `/eval` Evaluation Lab | **Verified** |
 | **End-to-End System Smoke Test** | Full 3-Act System Invariant Lifecycle | [`tests/test_e2e_lifecycle.py`](file:///tests/test_e2e_lifecycle.py) | `/demo` 3-Act Showcase | **Verified** |
 
 ### Contextual MCP Attack Surface Reduction (25 Registered Tools)

@@ -90,7 +90,7 @@ export default function EvalPage() {
         title="Deterministic Evaluation Lab & Benchmark Harness"
         icon={FlaskConical}
         architecturePhase="Continuous Verification & Threat Modeling"
-        description="Empirical security benchmarks (N=1,000 scenarios, 800 hostile prompt-injections / escalations, 200 legitimate operations) evaluated deterministically against Mandate's Policy Engine versus theoretical counterfactual baselines."
+        description="Empirical security benchmarks (N=1,430 scenarios: 1,144 hostile prompt-injections / escalations, 286 legitimate operations) evaluated deterministically against Mandate's Policy Engine versus theoretical counterfactual baselines."
         lastUpdated={lastUpdated}
         isLoading={loading || runningEval}
         onRefresh={handleRerun}
@@ -111,7 +111,7 @@ export default function EvalPage() {
               className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2 text-xs font-semibold text-white shadow-md shadow-blue-600/25 transition-all disabled:opacity-50"
             >
               <Play className={`h-3.5 w-3.5 ${runningEval ? "animate-spin" : ""}`} />
-              <span>{runningEval ? "Executing Harness..." : "Run N=1,000 Benchmark"}</span>
+              <span>{runningEval ? "Executing Harness..." : "Run Evaluation Harness"}</span>
             </button>
           </div>
         }
@@ -151,7 +151,7 @@ export default function EvalPage() {
                 {((metrics?.unauthorized_action_block_rate ?? 1) * 100).toFixed(1)}%
               </p>
               <span className="text-[11px] text-slate-400 font-mono">
-                {metrics?.adversarial_scenarios || 800} / {metrics?.adversarial_scenarios || 800} Hostile Attacks Blocked
+                {metrics?.adversarial_scenarios || 1144} / {metrics?.adversarial_scenarios || 1144} Hostile Attacks Blocked
               </span>
             </div>
 
@@ -190,7 +190,7 @@ export default function EvalPage() {
                 <TrendingUp className="h-4 w-4 text-emerald-400" />
               </div>
               <p className="text-2xl font-bold font-mono text-emerald-400">
-                ₹{((metrics?.financial_loss_prevented_inr || 218500000) / 10000000).toFixed(2)} Cr
+                ₹{((metrics?.financial_loss_prevented_inr || 321750000) / 10000000).toFixed(2)} Cr
               </p>
               <span className="text-[11px] text-slate-400 font-mono">
                 0 Unauthorized Razorpay Effects
@@ -207,7 +207,7 @@ export default function EvalPage() {
                 <Clock className="h-4 w-4 text-indigo-400" />
                 Deterministic In-Memory Policy Evaluation Latency Distribution:
               </span>
-              <span className="text-emerald-400 font-bold">Sub-5ms Guaranteed</span>
+              <span className="text-slate-400 font-medium">Synchronous In-Memory Enforcement</span>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
               <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">

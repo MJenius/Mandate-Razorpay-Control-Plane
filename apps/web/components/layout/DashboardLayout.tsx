@@ -35,7 +35,7 @@ const NAV_ITEMS = [
   { name: "Reliability & DLQ", href: "/operations", icon: Activity, tag: "Telemetry" },
   { name: "Transactions", href: "/transactions", icon: CreditCard, tag: "Ledger" },
   { name: "Audit Trail", href: "/audit", icon: FileText, tag: "Immutable" },
-  { name: "Evaluation Lab", href: "/eval", icon: FlaskConical, tag: "N=1,000" },
+  { name: "Evaluation Lab", href: "/eval", icon: FlaskConical, tag: "Benchmark" },
   { name: "Competition Demo", href: "/demo", icon: Play, tag: "Showcase" },
 ];
 

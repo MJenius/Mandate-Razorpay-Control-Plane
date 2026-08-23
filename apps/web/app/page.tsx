@@ -170,10 +170,10 @@ export default function OverviewPage() {
             </div>
             <div className="flex items-baseline gap-2">
               <span className="text-3xl font-bold text-emerald-400 font-mono">100.0%</span>
-              <span className="text-xs text-slate-400 font-mono">N=1,000</span>
+              <span className="text-xs text-slate-400 font-mono">1,144 / 1,144</span>
             </div>
             <p className="text-[11px] text-slate-400 font-mono">
-              0.0% Bypass · ₹21.85 Cr Loss Prevented
+              0.0% Bypass · ₹32.17 Cr Loss Prevented
             </p>
           </div>
         </div>
