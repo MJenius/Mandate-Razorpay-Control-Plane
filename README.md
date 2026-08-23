@@ -45,8 +45,8 @@ graph TD
         R2 -->|Rule 8: Guardrails| R3["Human-in-the-Loop Threshold Check"]
     end
     
-    Engine -->|"❌ DENY (<2ms)"| ZeroEffect["🚫 Zero-Gateway-Dispatch (0 Calls to Razorpay)"]
-    Engine -->|"✅ ALLOW (<2ms)"| CAS["🔒 CAS Budget Reservation (RESERVED)"]
+    Engine -->|"❌ DENY"| ZeroEffect["🚫 Zero-Gateway-Dispatch (0 Calls to Razorpay)"]
+    Engine -->|"✅ ALLOW"| CAS["🔒 CAS Budget Reservation (RESERVED)"]
     
     CAS -->|"Idempotent HTTP Request"| RZP["💳 Razorpay API (Test Mode Sandbox)"]
     RZP -->|"Order Created"| Awaiting["⏳ EXECUTING State"]
@@ -93,7 +93,7 @@ MCP Tool (payments_create_order)
   ↓
 Mandate Security Gateway (Resolves agt_procurement_child_01)
   ↓
-Policy Engine (8 Rules evaluated: ALLOW in <2ms)
+Policy Engine (8 Deterministic Rules Evaluated → ALLOW)
   ↓
 Atomic CAS Budget Reservation (₹6,500 RESERVED)
   ↓

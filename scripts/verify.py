@@ -222,42 +222,28 @@ async def verify_api_probes() -> tuple[bool, str, str]:
     print_banner("7/7: Verifying Live FastAPI Probes (/health and /ready)")
     import httpx
 
-    # Try live running HTTP server first
+    # Strictly verify against live containerized HTTP server
     try:
         async with httpx.AsyncClient(base_url="http://localhost:8000", timeout=5.0) as client:
             h_res = await client.get("/health")
-            r_res = await client.get("/ready")
-            if h_res.status_code == 200 and r_res.status_code == 200:
-                r_json = r_res.json()
-                r_status = r_json.get("status", "ready")
-                print(f"[PASSED] Probes verified on live container http://localhost:8000: /health (200 OK) | /ready (200 OK - {r_status})")
-                return True, "200 OK", f"200 OK ({r_status})"
-    except Exception:
-        pass
+            if h_res.status_code != 200 or h_res.json().get("status") != "ok":
+                print(f"[FAILED] Live container /health returned status {h_res.status_code}: {h_res.text}")
+                return False, f"{h_res.status_code}", "unhealthy"
 
-    # Direct ASGI testing
-    try:
-        from apps.api.main import app
-        from packages.shared.database import dispose_engine
-
-        await dispose_engine()
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test", timeout=5.0) as client:
-            h_res = await client.get("/health")
             r_res = await client.get("/ready")
             r_json = r_res.json()
             r_status = r_json.get("status", "unknown")
-            await dispose_engine()
 
-            if h_res.status_code == 200 and r_res.status_code == 200:
-                print(f"[PASSED] Probes verified: /health (200 OK) | /ready (200 OK - {r_status})")
+            if r_res.status_code == 200 and r_status == "ready":
+                print(f"[PASSED] Probes verified on live container http://localhost:8000: /health (200 OK) | /ready (200 OK - {r_status})")
                 return True, "200 OK", f"200 OK ({r_status})"
             else:
-                print(f"[FAILED] Ready probe returned non-ready status: {r_res.status_code} ({r_status})")
-                return False, f"{h_res.status_code}", f"{r_res.status_code} ({r_status})"
+                print(f"[FAILED] Live container /ready probe returned non-ready status: {r_res.status_code} ({r_status})")
+                return False, "200 OK", f"{r_res.status_code} ({r_status})"
     except Exception as e:
-        print(f"[FAILED] API probe verification failed: {e}")
-        return False, "error", str(e)
+        print(f"[FAILED] Unable to connect to live API server at http://localhost:8000: {e}")
+        print("[HINT] Ensure Docker containers are running (`docker compose up -d`) before running authoritative verification.")
+        return False, "connection_failed", str(e)
 
 
 def main() -> int:

@@ -55,16 +55,16 @@ const DEMO_ACTS: ActConfig[] = [
     description:
       "Autonomous buyer agent receives user request to purchase 1 Keychron K2 Keyboard for ₹6,500. Mandate Policy Engine validates constraints, reserves budget via CAS, dispatches to Razorpay Test Mode, verifies inbound HMAC-SHA256 webhook, and logs immutable audit trail.",
     securityInvariant:
-      "Deterministic 8-rule evaluation in <2ms. CAS 2-Phase reservation guarantees 0 double-spending. HMAC-SHA256 signature verified before ledger commit.",
+      "Deterministic 8-rule evaluation (ALLOW). CAS 2-Phase reservation guarantees 0 double-spending. HMAC-SHA256 signature verified before ledger commit.",
     flowSteps: [
       "1. User Prompt: 'Procure Keychron K2 keyboard'",
       "2. Shopping Agent invokes MCP Tool: payments_create_order",
       "3. Mandate Security Gateway resolves Agent ID & active Mandate",
-      "4. Policy Engine evaluates 8 deterministic rules -> ALLOW (<2ms)",
+      "4. Policy Engine evaluates 8 deterministic rules -> ALLOW",
       "5. Atomic CAS Budget Reservation: ₹6,500 RESERVED",
       "6. Razorpay Test Mode: Order Created (order_mock_...)",
       "7. Webhook Ingestion: HMAC-SHA256 verified payment.captured",
-      "8. Immutable Cryptographic Audit Trail Recorded",
+      "8. Immutable Audit Trail Recorded",
     ],
     expectedDecision: "ALLOW",
   },

@@ -325,7 +325,7 @@ export default function OperationsPage() {
             },
             {
               name: "POLICY_APPROVED",
-              desc: "Mandate Policy Engine verified all 8 rules in <2ms. Authorized to proceed.",
+              desc: "Mandate Policy Engine verified all 8 deterministic rules. Authorized to proceed.",
               color: "border-indigo-500/30 text-indigo-400 bg-indigo-950/40",
             },
             {
