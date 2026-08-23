@@ -3,7 +3,7 @@
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +28,7 @@ from packages.razorpay.client import (
     RazorpayPaymentLinkRequest,
     RazorpayRefundRequest,
 )
+from packages.shared.auth import authenticate_agent_caller
 from packages.shared.database import get_db_session
 from packages.shared.logging import get_logger
 
@@ -65,17 +66,36 @@ async def get_operation(
 @router.post("", response_model=OperationResponse, status_code=status.HTTP_201_CREATED)
 async def request_financial_operation(
     payload: OperationCreate,
+    x_agent_key: str | None = Header(None, alias="X-Agent-Key"),
+    authorization: str | None = Header(None, alias="Authorization"),
+    x_agent_id: str | None = Header(None, alias="X-Agent-Id"),
     db: AsyncSession = Depends(get_db_session),
 ) -> FinancialOperation:
     """
     Deterministic Financial Operation Request Pipeline:
-    1. Idempotency Check
-    2. Concurrency-safe Mandate Row Lock
-    3. Deterministic Policy Evaluation (ALLOW / DENY / REQUIRE_HUMAN_REVIEW)
-    4. Atomic Budget Reservation (Conditional Atomic CAS UPDATE)
-    5. Zero-Gateway-Dispatch Invariant on Non-ALLOW
-    6. Gateway Execution + State Sync (Commit or Release Budget)
+    1. Authoritative Agent Authentication & Identity Resolution
+    2. Idempotency Check
+    3. Concurrency-safe Mandate Row Lock
+    4. Deterministic Policy Evaluation (ALLOW / DENY / REQUIRE_HUMAN_REVIEW)
+    5. Atomic Budget Reservation (Conditional Atomic CAS UPDATE)
+    6. Zero-Gateway-Dispatch Invariant on Non-ALLOW
+    7. Gateway Execution + State Sync (Commit or Release Budget)
     """
+    # 1. Authoritative Agent Authentication
+    active_agent = await authenticate_agent_caller(
+        db=db,
+        x_agent_key=x_agent_key,
+        authorization=authorization,
+        x_agent_id=x_agent_id or payload.agent_id,
+        required=False,
+    ) if (x_agent_key or authorization) else None
+
+    if active_agent and active_agent.id != payload.agent_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Agent identity mismatch: Authenticated as '{active_agent.id}', but payload requested '{payload.agent_id}'",
+        )
+
     # 1. Idempotency Check
     existing_stmt = select(FinancialOperation).where(
         FinancialOperation.idempotency_key == payload.idempotency_key

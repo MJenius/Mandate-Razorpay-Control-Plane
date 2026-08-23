@@ -51,19 +51,23 @@ export default function DashboardLayout({
 
   const checkHealth = async () => {
     try {
-      const res = await api.getHealth();
-      if (res && res.status === "ok") {
+      const res = await api.getReadiness();
+      if (res && res.status === "ready") {
         setBackendHealth("healthy");
-        setHealthDetail("FastAPI Backend Connected");
-      } else {
+        setHealthDetail("PostgreSQL + Redis Operational");
+      } else if (res && res.status === "degraded") {
         setBackendHealth("degraded");
-        setHealthDetail("Backend reporting non-OK status");
+        setHealthDetail("Core DB Active (Redis Cache Degraded)");
+      } else {
+        setBackendHealth("offline");
+        setHealthDetail("PostgreSQL Unreachable / Uninitialized");
       }
     } catch {
       setBackendHealth("offline");
-      setHealthDetail(`Cannot connect to ${API_BASE_URL}`);
+      setHealthDetail(`Control Plane Unreachable (${API_BASE_URL})`);
     }
   };
+
 
   useEffect(() => {
     checkHealth();

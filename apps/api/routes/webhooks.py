@@ -54,12 +54,21 @@ async def handle_razorpay_webhook(
 
         if not hmac.compare_digest(expected_sig, x_razorpay_signature):
             logger.warning(
-                "webhook_signature_verification_failed", received_sig=x_razorpay_signature
+                "webhook_signature_verification_failed",
+                path="/webhooks/razorpay",
+                event_length=len(raw_body),
             )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid Razorpay webhook signature",
             )
+    elif settings.ENVIRONMENT.lower() == "production":
+        logger.error("webhook_secret_missing_in_production")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Webhook verification secret is not configured.",
+        )
+
 
     try:
         event_data = json.loads(body_str)

@@ -122,8 +122,10 @@ class RazorpayClient:
         max_retries: int = 3,
     ) -> dict[str, Any]:
         """
-        Executes HTTP request against Razorpay REST API.
-        Strict Retries Invariant: Only retry genuinely idempotent operations (GET requests or mutations with explicit idempotency key / receipt). Never blindly retry naked financial mutations.
+        Executes HTTP request against Razorpay REST API with strict idempotency invariants:
+        - GET requests: Retry on transient network errors (500, 502, 503, 504, 429, timeouts).
+        - POST mutations: Blind retries on network timeouts are strictly avoided. Instead, ambiguous
+          outcomes are reconciled via the background worker / fetch_order before any secondary action.
         """
         import asyncio
         import random
@@ -157,12 +159,17 @@ class RazorpayClient:
                         path=path,
                         attempt=attempt,
                         backoff_seconds=round(backoff, 2),
-                        error=str(exc),
                     )
                     await asyncio.sleep(backoff)
                     continue
 
-                logger.error("razorpay_request_failed", path=path, attempt=attempt, is_idempotent=is_idempotent, error=str(exc))
+                logger.error(
+                    "razorpay_request_failed",
+                    path=path,
+                    attempt=attempt,
+                    is_idempotent=is_idempotent,
+                    error=str(exc),
+                )
                 raise
 
         raise RuntimeError(f"Failed all {attempts} attempts for {method} {path}")
@@ -171,6 +178,13 @@ class RazorpayClient:
     # Orders Subsystem
     # ========================================================
     async def create_order(self, req: RazorpayOrderRequest) -> RazorpayOrderResponse:
+        """
+        Creates an Order on Razorpay.
+        Idempotency / Timeout Reconciliation:
+        If a network timeout occurs during POST /orders, the operation remains in EXECUTING/RESERVED
+        until the background reconciliation worker verifies gateway state via fetch_order,
+        preventing duplicate financial mutations.
+        """
         import time
 
         logger.info(
@@ -200,9 +214,9 @@ class RazorpayClient:
             "partial_payment": req.partial_payment,
         }
 
-        # Order creation is idempotent because receipt is guaranteed unique
-        data = await self._request_with_retry("POST", "/orders", json_data=payload, is_idempotent=bool(req.receipt))
+        data = await self._request_with_retry("POST", "/orders", json_data=payload, is_idempotent=False)
         return RazorpayOrderResponse(**data)
+
 
     async def fetch_order(self, order_id: str) -> RazorpayOrderResponse:
         import time

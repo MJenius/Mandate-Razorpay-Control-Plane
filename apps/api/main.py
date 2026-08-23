@@ -30,34 +30,59 @@ logger = get_logger("api.main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Lifespan context for DB initialization and teardown."""
-    logger.info("mandate_api_starting")
+    """Deterministic lifespan context for DB initialization, retries, and teardown."""
+    import asyncio
+    settings = get_settings()
+    logger.info("mandate_api_starting", environment=settings.ENVIRONMENT)
 
-    # Auto-create tables and bootstrap default demo agents in development / test
-    try:
-        engine = get_engine()
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        # Proactively bootstrap seed agents only if database is currently unseeded
-        from sqlalchemy import func, select
+    # Deterministic DB Initialization with Exponential Backoff Retries
+    db_initialized = False
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            engine = get_engine()
+            async with engine.begin() as conn:
+                if settings.AUTO_MIGRATE_ON_STARTUP:
+                    await conn.run_sync(Base.metadata.create_all)
+            
+            # Optional Development / Test Seeding
+            if settings.AUTO_SEED_DEMO and settings.ENVIRONMENT.lower() != "production":
+                from sqlalchemy import func, select
+                from apps.api.routes.demo import reset_demo_dataset
+                from packages.core.models import Agent
+                from packages.shared.database import get_session_factory
 
-        from apps.api.routes.demo import reset_demo_dataset
-        from packages.core.models import Agent
-        from packages.shared.database import get_session_factory
-
-        session_factory = get_session_factory()
-        async with session_factory() as session:
-            agent_count = (await session.execute(select(func.count(Agent.id)))).scalar() or 0
-            if agent_count == 0:
-                await reset_demo_dataset(db=session)
-                logger.info("database_demo_state_bootstrapped")
+                session_factory = get_session_factory()
+                async with session_factory() as session:
+                    agent_count = (await session.execute(select(func.count(Agent.id)))).scalar() or 0
+                    if agent_count == 0:
+                        await reset_demo_dataset(db=session)
+                        logger.info("database_demo_state_bootstrapped")
+                    else:
+                        logger.info("database_already_seeded", agent_count=agent_count)
+            
+            db_initialized = True
+            logger.info("database_connection_and_schema_ready", attempt=attempt)
+            break
+        except Exception as exc:
+            logger.warning(
+                "database_startup_retry",
+                attempt=attempt,
+                max_retries=max_retries,
+                reason=str(exc),
+            )
+            if attempt < max_retries:
+                await asyncio.sleep(0.5 * (2 ** (attempt - 1)))
             else:
-                logger.info("database_already_seeded", agent_count=agent_count)
-    except Exception as exc:
-        logger.warning("database_sync_deferred", reason=str(exc))
+                if settings.ENVIRONMENT.lower() == "production":
+                    logger.critical("fatal_database_startup_failure", error=str(exc))
+                    raise RuntimeError(f"Fatal: Database unreachable on startup: {exc}") from exc
+                else:
+                    logger.error("database_sync_failed_dev_mode", error=str(exc))
 
     yield
     logger.info("mandate_api_stopping")
+
 
 
 def create_app() -> FastAPI:

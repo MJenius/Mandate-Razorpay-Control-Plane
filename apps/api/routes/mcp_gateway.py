@@ -4,7 +4,7 @@ import time
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -143,54 +143,28 @@ async def handle_mcp_jsonrpc_gateway(
     4. Guarded Tool Dispatch ('tools/call'): Enforces strict schema validation, routes through Mandate Policy Engine, and dispatches to Razorpay Test Mode.
     """
     # 1. Authoritative Agent Authentication & Identity Resolution
-    agent: Agent | None = None
-    bearer_token: str | None = None
-    if authorization and authorization.startswith("Bearer "):
-        bearer_token = authorization[7:].strip()
-
-    active_key = x_agent_key or bearer_token
-
-    if active_key:
-        # Look up agent by api_key_hash or direct match
-        key_stmt = select(Agent).where(
-            (Agent.api_key_hash == active_key)
-            | (Agent.api_key_hash == f"hash_{active_key}")
-            | (Agent.id == active_key)
+    try:
+        from packages.shared.auth import authenticate_agent_caller
+        agent = await authenticate_agent_caller(
+            db=db,
+            x_agent_key=x_agent_key,
+            authorization=authorization,
+            x_agent_id=x_agent_id,
+            required=True,
         )
-        key_res = await db.execute(key_stmt)
-        agent = key_res.scalars().first()
-
-        if not agent:
-            return MCPJsonRpcResponse(
-                id=request_payload.id,
-                error={"code": -32001, "message": "Invalid or unauthorized Agent API Key"},
-            )
-
-        # Prevent identity mismatch if X-Agent-Id is also specified
-        if x_agent_id and agent.id != x_agent_id:
-            return MCPJsonRpcResponse(
-                id=request_payload.id,
-                error={
-                    "code": -32001,
-                    "message": f"Agent identity mismatch: Key derives agent '{agent.id}', but X-Agent-Id requested '{x_agent_id}'",
-                },
-            )
-    elif x_agent_id:
-        # Compatibility / Demo Path
-        agent = await db.get(Agent, x_agent_id)
-        if not agent:
-            return MCPJsonRpcResponse(
-                id=request_payload.id,
-                error={"code": -32001, "message": f"Agent '{x_agent_id}' not found or unauthenticated"},
-            )
-    else:
+    except HTTPException as exc:
         return MCPJsonRpcResponse(
             id=request_payload.id,
-            error={
-                "code": -32001,
-                "message": "Missing authentication: Provide X-Agent-Key, Authorization Bearer token, or X-Agent-Id header",
-            },
+            error={"code": -32001, "message": exc.detail},
         )
+
+    if not agent:
+        return MCPJsonRpcResponse(
+            id=request_payload.id,
+            error={"code": -32001, "message": "Authentication required"},
+        )
+
+
 
     mandate_stmt = (
         select(Mandate)
@@ -332,7 +306,12 @@ async def _dispatch_mcp_tool_call(
     )
 
     try:
-        op = await request_financial_operation(payload=op_req, db=db)
+        op = await request_financial_operation(
+            payload=op_req,
+            x_agent_key=agent.api_key_hash,
+            x_agent_id=agent.id,
+            db=db,
+        )
         decision = op.policy_evaluation_details.get("decision", "DENY")
         elapsed_ms = round((time.perf_counter() - start_time) * 1000, 2)
 
@@ -341,6 +320,8 @@ async def _dispatch_mcp_tool_call(
                 id=rpc_id,
                 result={
                     "isError": True,
+                    "authorized": False,
+                    "policy_decision": "DENY",
                     "content": [
                         {"type": "text", "text": f"Mandate Policy DENIED: {op.error_message}"}
                     ],
@@ -354,6 +335,13 @@ async def _dispatch_mcp_tool_call(
             )
 
         # Successful execution
+        from packages.core.models import Transaction
+        tx_stmt = select(Transaction).where(Transaction.operation_id == op.id)
+        tx_res = await db.execute(tx_stmt)
+        tx = tx_res.scalar_one_or_none()
+        gateway_order_id = tx.gateway_order_id if (tx and tx.gateway_order_id) else f"order_{op.operation_id}"
+
+
         return MCPJsonRpcResponse(
             id=rpc_id,
             result={
@@ -363,6 +351,11 @@ async def _dispatch_mcp_tool_call(
                         "text": f"Executed {tool_name} successfully. Operation ID: {op.operation_id}, Status: {op.status.value}",
                     }
                 ],
+                "authorized": True,
+                "policy_decision": "ALLOW",
+                "mandate_status": op.status.value,
+                "operation_id": op.operation_id,
+                "gateway_order": {"id": gateway_order_id},
                 "_mandate_meta": {
                     "decision": "ALLOW",
                     "operation_id": op.operation_id,
@@ -382,3 +375,4 @@ async def _dispatch_mcp_tool_call(
             id=rpc_id,
             error={"code": -32000, "message": f"Mandate MCP execution error: {str(exc)}"},
         )
+

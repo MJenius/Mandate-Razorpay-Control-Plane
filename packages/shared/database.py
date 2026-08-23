@@ -29,6 +29,15 @@ def get_engine() -> AsyncEngine:
     return _engine
 
 
+async def dispose_engine() -> None:
+    """Explicitly clean up connection pool across event loops."""
+    global _engine, _session_factory
+    if _engine is not None:
+        await _engine.dispose()
+        _engine = None
+        _session_factory = None
+
+
 def get_session_factory() -> async_sessionmaker[AsyncSession]:
     global _session_factory
     if _session_factory is None:

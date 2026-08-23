@@ -3,8 +3,8 @@
 > **Financial authorization and control plane for AI agents operating through Razorpay APIs & MCP.**
 
 [![CI/CD](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
-[![Tests](https://img.shields.io/badge/tests-51%20passed%20%7C%201%20skipped-success.svg)]()
-[![Evidence Suite](https://img.shields.io/badge/evidence%20claims-7%2F7%20verified-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-57%20passed%20%7C%201%20skipped-success.svg)]()
+[![Evidence Suite](https://img.shields.io/badge/evidence%20claims-8%2F8%20verified-brightgreen.svg)]()
 [![Benchmark](https://img.shields.io/badge/empirical%20eval-1%2C000%20scenarios%20%7C%20100%25%20blocked-blue.svg)]()
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)]()
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.14-blue.svg)]()
@@ -15,7 +15,7 @@ GitHub Repository Description:
 Financial authorization and control plane for AI agents operating through Razorpay APIs & MCP
 
 GitHub Topics:
-ai-agents, razorpay, mcp, agentic-commerce, fintech, authorization, fastapi, nextjs
+ai-agents, razorpay, mcp, agentic-commerce, fintech, authorization, fastapi, nextjs, security
 ```
 
 ---
@@ -36,7 +36,7 @@ graph TD
     Agent -->|"JSON-RPC 2.0 (X-Agent-Key)"| MCP["🛡️ Mandate MCP Security Gateway"]
     
     subgraph Mandate Control Plane
-        MCP -->|"1. Dynamic Tool Surface Filtering (25+ → 2 Tools)"| Filter["Filter Tools"]
+        MCP -->|"1. Dynamic Tool Surface Filtering (25+ → 2–3 Tools)"| Filter["Filter Tools"]
         Filter -->|"2. Authoritative Key Authentication"| Identity["Resolve Agent & Mandate"]
         Identity -->|"3. Policy Check"| Engine["Deterministic Policy Engine (8 Sequential Rules)"]
         
@@ -54,7 +54,7 @@ graph TD
     RZP -->|"📡 payment.captured (HMAC-SHA256)"| Webhook["🔐 Webhook Ingestion & Idempotency Lock"]
     Webhook -->|"State Transition: RESERVED → SUCCEEDED"| Commit["💰 Ledger Spend Committed"]
     
-    Commit --> Audit["📜 Immutable Audit Trail & Merkle Trace"]
+    Commit --> Audit["📜 Immutable Audit Trail & State Transition Log"]
     ZeroEffect --> Audit
     
     subgraph Self-Healing Resilience
@@ -67,11 +67,13 @@ graph TD
 
 ## 3. Key Performance & Security Metrics
 
+All metrics below are strictly measured and validated against canonical empirical artifacts ([`BENCHMARK_REPORT.md`](file:///BENCHMARK_REPORT.md)):
+
 | Metric | Measured Value (`N=1,000`) | Invariant Guarantee |
 | :--- | :---: | :--- |
 | **Hostile Action Block Rate** | **100.0%** (800 / 800) | 100% of malicious prompt injections, overreaches, and forged refunds intercepted synchronously. |
 | **Unauthorized Razorpay Effects** | **0** | Strict **Zero-Gateway-Dispatch Invariant**: blocked actions make 0 API requests to Razorpay. |
-| **Authorization Overhead (P50 / P99)** | **6.81 ms / 13.03 ms** | Sub-15ms tail latency enables real-time agent execution without slowing customer checkout. |
+| **Authorization Overhead (P50 / P95 / P99)** | **6.31 ms / 12.22 ms / 16.13 ms** | Sub-20ms tail latency enables real-time agent execution without slowing customer checkout. |
 | **False Positive Rate (FPR)** | **0.0%** (0 / 200) | Zero customer friction on legitimate commerce operations within granted mandate limits. |
 | **Counterfactual Loss Prevented** | **₹21,85,00,000.00** | ₹21.85 Crore enterprise capital protected across 800 simulated adversarial vectors. |
 
@@ -138,28 +140,35 @@ Correct Final State Achieved with Zero Drift
 
 ---
 
-## 5. Architectural Claims & Evidence Map
+## 5. Architectural Claims & Evidence Traceability Matrix
 
-Every architectural claim is backed by reproducible automated tests and empirical artifacts:
+Every architectural claim is backed across 4 distinct layers: Implementation Code, Automated Tests, Dashboard UI, and Documentation:
 
-| # | Core Claim | Evidence Test / Artifact | Implementation Path Validated |
-| :---: | :--- | :--- | :--- |
-| **1** | **No unauthorized gateway calls** | [`tests/test_evidence_claims.py::test_claim_1_no_unauthorized_gateway_calls`](file:///tests/test_evidence_claims.py#L38-L95) | Policy DENY terminates synchronously; `RazorpayClient._request_with_retry` spy confirms `call_count == 0`. |
-| **2** | **Concurrent budgets cannot overspend** | [`tests/test_evidence_claims.py::test_claim_2_concurrent_budgets_cannot_overspend`](file:///tests/test_evidence_claims.py#L98-L188) | 20 concurrent coroutines competing for ₹10,000 budget; exactly 10 succeed, 10 fail, 0 paise overspend. |
-| **3** | **MCP tool surface is dynamically reduced** | [`tests/test_evidence_claims.py::test_claim_3_mcp_tool_surface_reduced`](file:///tests/test_evidence_claims.py#L191-L248) | MCP `/tools/list` evaluates active mandate and slashes catalog from 25+ tools to 3 order tools (88% reduction). |
-| **4** | **Parent revocation cascades down the DAG** | [`tests/test_evidence_claims.py::test_claim_4_parent_revocation_cascades`](file:///tests/test_evidence_claims.py#L251-L330) | Revoking root parent mandate cascades across child mandates; child operations rejected immediately with `REVOKED`. |
-| **5** | **Webhook replay is idempotent & safe** | [`tests/test_evidence_claims.py::test_claim_5_webhook_replay_is_safe`](file:///tests/test_evidence_claims.py#L333-L440) | Duplicate webhook event ingestion returns `DUPLICATE_IGNORED`; budget is committed exactly once without double-spend. |
-| **6** | **Recovery works after crashes / partitions** | [`tests/test_evidence_claims.py::test_claim_6_recovery_works_failure_injection`](file:///tests/test_evidence_claims.py#L443-L506) | Simulated orphan reservations in `RESERVED` are swept by worker, transitioned to `FAILED`, and budget released. |
-| **7** | **1,000 scenarios empirical benchmark** | [`packages/eval/large_scale_benchmark.py`](file:///packages/eval/large_scale_benchmark.py) & [`BENCHMARK_REPORT.md`](file:///BENCHMARK_REPORT.md) | Reproducible benchmark across 800 hostile + 200 legitimate scenarios; 100% block rate, 0% bypass, 0% FPR. |
+| Core Claim | Implementation Layer | Automated Test Suite | Dashboard UI Representation | Status |
+| :--- | :--- | :--- | :--- | :---: |
+| **Zero-Gateway-Dispatch** | [`packages/policy/engine.py`](file:///packages/policy/engine.py) & [`apps/api/routes/operations.py`](file:///apps/api/routes/operations.py) | [`tests/test_evidence_claims.py::test_claim_1`](file:///tests/test_evidence_claims.py) | `/policies` & `/demo` (Act 2) | **Verified** |
+| **Atomic Budget Reservation** | [`apps/api/routes/operations.py`](file:///apps/api/routes/operations.py) (CAS Lock) | [`tests/test_evidence_claims.py::test_claim_2`](file:///tests/test_evidence_claims.py) | `/mandates` & `/` Overview | **Verified** |
+| **Dynamic MCP Tool Filtering** | [`packages/mcp/catalog.py`](file:///packages/mcp/catalog.py) & [`apps/api/routes/mcp_gateway.py`](file:///apps/api/routes/mcp_gateway.py) | [`tests/test_evidence_claims.py::test_claim_3`](file:///tests/test_evidence_claims.py) | `/commerce` MCP Gateway | **Verified** |
+| **Cascading DAG Revocation** | [`apps/api/routes/mandates.py`](file:///apps/api/routes/mandates.py) | [`tests/test_evidence_claims.py::test_claim_4`](file:///tests/test_evidence_claims.py) | `/delegation` Hierarchy | **Verified** |
+| **Webhook Idempotency & Replay** | [`apps/api/routes/webhooks.py`](file:///apps/api/routes/webhooks.py) | [`tests/test_evidence_claims.py::test_claim_5`](file:///tests/test_evidence_claims.py) | `/operations` Telemetry | **Verified** |
+| **Self-Healing Reconciliation** | [`services/worker/main.py`](file:///services/worker/main.py) | [`tests/test_evidence_claims.py::test_claim_6`](file:///tests/test_evidence_claims.py) | `/operations` & `/demo` (Act 3) | **Verified** |
+| **1,000 Scenarios Benchmark** | [`packages/eval/large_scale_benchmark.py`](file:///packages/eval/large_scale_benchmark.py) | [`tests/test_evidence_claims.py::test_claim_7`](file:///tests/test_evidence_claims.py) | `/eval` Evaluation Lab | **Verified** |
+| **End-to-End System Smoke Test** | Full 3-Act System Invariant Lifecycle | [`tests/test_e2e_lifecycle.py`](file:///tests/test_e2e_lifecycle.py) | `/demo` 3-Act Showcase | **Verified** |
+
+### Contextual MCP Attack Surface Reduction (25 Registered Tools)
+- **Procurement Agent**: Slashes 25 → 2 tools (**92.0% Attack Surface Reduction**)
+- **Shopping / Buyer Agent**: Slashes 25 → 3 tools (**88.0% Attack Surface Reduction**)
+- **Support / Dispute Agent**: Slashes 25 → 3 tools (**88.0% Attack Surface Reduction**)
+- **Finance / Invoicing Agent**: Slashes 25 → 4 tools (**84.0% Attack Surface Reduction**)
 
 ---
 
 ## 6. Single-Command Verification
 
-To run the complete verification suite (Backend Tests, MyPy Type Checking, 1,000 Scenarios Benchmark, and Next.js Frontend Production Build):
+To run the complete verification suite (Environment/Config, Database Readiness Probe, MyPy Strict Static Typing, Pytest Suite, Benchmark Artifact, and Next.js Production Build):
 
 ```bash
-# Option A: Python Runner (Cross-platform)
+# Option A: Authoritative Python Runner (Cross-platform)
 python scripts/verify.py
 
 # Option B: Make Command
@@ -181,7 +190,12 @@ docker compose up --build
 - **Web Dashboard**: [http://localhost:3000](http://localhost:3000)
 - **Interactive 5-Minute Showcase**: [http://localhost:3000/demo](http://localhost:3000/demo)
 - **FastAPI OpenAPI Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
-- **Health / Ready Probes**: [http://localhost:8000/ready](http://localhost:8000/ready)
+- **Health & Readiness Probes**: [http://localhost:8000/ready](http://localhost:8000/ready)
+- **PostgreSQL Database**: Exposed on host port `5433` by default (`localhost:5433/mandate_db`) to avoid conflicts with local host PostgreSQL installations (internally mapped to standard `5432` inside Docker network).
+- **Redis Cache**: Exposed on host port `6379` (`redis://localhost:6379/0`).
+
+> [!NOTE]
+> **PostgreSQL Host Port**: PostgreSQL is mapped to host port `5433` (`5433:5432`) in `docker-compose.yml` to prevent port collisions on systems with existing local PostgreSQL installations. Containers communicate over the internal Docker network on standard port `5432`.
 
 ### 2. Run Locally without Docker
 ```bash

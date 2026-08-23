@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,11 +26,21 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str = (
-        "postgresql+asyncpg://mandate_user:mandate_secure_password@localhost:5432/mandate_db"
+        "postgresql+asyncpg://mandate_user:mandate_secure_password@localhost:5433/mandate_db"
     )
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
+
+    # Production & Seeding Guardrails
+    AUTO_SEED_DEMO: bool = Field(
+        default=False,
+        description="When True and in development/test, automatically seed demo agents if database is empty",
+    )
+    AUTO_MIGRATE_ON_STARTUP: bool = Field(
+        default=True,
+        description="In development/demo mode, automatically synchronize schema on startup",
+    )
 
     # Razorpay Test Mode & Live API configuration
     RAZORPAY_KEY_ID: str = Field(default="", description="Razorpay Key ID")
@@ -51,6 +61,19 @@ class Settings(BaseSettings):
     @property
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",") if origin.strip()]
+
+    @model_validator(mode="after")
+    def validate_production_safety(self) -> "Settings":
+        """Strict production configuration invariants."""
+        if self.ENVIRONMENT.lower() == "production":
+            if self.AUTO_SEED_DEMO:
+                raise ValueError("AUTO_SEED_DEMO cannot be enabled in production environment.")
+            if self.RAZORPAY_MOCK_MODE:
+                raise ValueError("RAZORPAY_MOCK_MODE must be False in production environment.")
+            if self.SECRET_KEY.startswith("dev-secret-key"):
+                raise ValueError("SECRET_KEY must be overridden with a secure key in production.")
+        return self
+
 
 
 @lru_cache

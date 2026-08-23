@@ -2,7 +2,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +11,7 @@ from packages.agents.adapter import BaseLLMAdapter, get_llm_adapter
 from packages.agents.runner import AgentRunner
 from packages.core.enums import MandateStatus
 from packages.core.models import Agent, AgentExecutionTrace, Mandate
+from packages.shared.auth import authenticate_agent_caller
 from packages.shared.database import get_db_session
 from packages.shared.logging import get_logger
 
@@ -56,6 +57,8 @@ class AgentTraceResponse(BaseModel):
 async def chat_with_agent(
     agent_id: str,
     payload: AgentChatRequest,
+    x_agent_key: str | None = Header(None, alias="X-Agent-Key"),
+    authorization: str | None = Header(None, alias="Authorization"),
     db: AsyncSession = Depends(get_db_session),
 ) -> dict[str, Any]:
     """
@@ -63,9 +66,21 @@ async def chat_with_agent(
     The agent uses tool calling to request financial operations, which are intercepted
     and authorized strictly by Mandate's Deterministic Policy Engine.
     """
-    agent = await db.get(Agent, agent_id)
+    if x_agent_key or authorization:
+        agent = await authenticate_agent_caller(
+            db=db,
+            x_agent_key=x_agent_key,
+            authorization=authorization,
+            x_agent_id=agent_id,
+            required=True,
+        )
+    else:
+        agent = await db.get(Agent, agent_id)
+
     if not agent:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+
 
     # Find the active mandate for this agent
     mandate_stmt = (
