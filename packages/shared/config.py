@@ -43,9 +43,13 @@ class Settings(BaseSettings):
     )
 
     # Razorpay Test Mode & Live API configuration
-    RAZORPAY_KEY_ID: str = Field(default="", description="Razorpay Key ID")
-    RAZORPAY_KEY_SECRET: str = Field(default="", description="Razorpay Key Secret")
-    RAZORPAY_WEBHOOK_SECRET: str = Field(default="", description="Razorpay Webhook Secret")
+    RAZORPAY_KEY_ID: str = Field(default="rzp_test_placeholder", description="Razorpay Key ID")
+    RAZORPAY_KEY_SECRET: str = Field(
+        default="sample_secret_key_for_testing_purposes_only", description="Razorpay Key Secret"
+    )
+    RAZORPAY_WEBHOOK_SECRET: str = Field(
+        default="sample_webhook_secret_key_for_testing", description="Razorpay Webhook Secret"
+    )
     RAZORPAY_BASE_URL: str = Field(
         default="https://api.razorpay.com/v1", description="Razorpay API Base URL"
     )
