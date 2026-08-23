@@ -34,6 +34,8 @@ dev = [
     "ruff>=0.6.0",
     "mypy>=1.11.0",
     "types-redis>=4.6.0.20240425",
+    "hypothesis>=6.0.0",
+    "locust>=2.0.0",
 ]
 
 [tool.setuptools.packages.find]
