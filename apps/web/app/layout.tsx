@@ -4,32 +4,32 @@ import DashboardLayout from "@/components/layout/DashboardLayout";
 import { ToastProvider } from "@/components/common/Toast";
 
 export const metadata: Metadata = {
-  title: "Mandate — Financial Control Plane for AI Agents & Razorpay",
+  title: "Mandate — Financial Control Plane for AI Agents",
   description:
-    "Production authorization control plane, deterministic policy engine, and MCP security gateway for autonomous AI agents operating on Razorpay.",
+    "A deterministic authorization and control plane for AI agents operating through Razorpay APIs and MCP.",
   metadataBase: new URL("https://mandate-razorpay-control-plane.vercel.app"),
   openGraph: {
-    title: "Mandate — Payment Control Plane",
+    title: "Mandate — Financial Control Plane for AI Agents",
     description:
-      "A control plane for safe, bounded and observable payment mandate execution.",
-    url: "https://mandate-razorpay-control-plane.vercel.app",
+      "A deterministic authorization and control plane for AI agents operating through Razorpay APIs and MCP.",
+    url: "https://mandate-razorpay-control-plane.vercel.app/",
     siteName: "Mandate",
     images: [
       {
-        url: "/og-image.png",
+        url: "https://mandate-razorpay-control-plane.vercel.app/og-image.png",
         width: 1200,
         height: 627,
-        alt: "Mandate Payment Control Plane",
+        alt: "Mandate — Financial Control Plane for AI Agents",
       },
     ],
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Mandate — Payment Control Plane",
+    title: "Mandate — Financial Control Plane for AI Agents",
     description:
-      "A control plane for safe, bounded and observable payment mandate execution.",
-    images: ["/og-image.png"],
+      "A deterministic authorization and control plane for AI agents operating through Razorpay APIs and MCP.",
+    images: ["https://mandate-razorpay-control-plane.vercel.app/og-image.png"],
   },
 };
 
