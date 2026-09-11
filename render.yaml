@@ -41,8 +41,7 @@ services:
       - key: SECRET_KEY
         generateValue: true
       - key: ALLOWED_ORIGINS
-        # Update with your Vercel deployment URL (e.g. https://mandate-web.vercel.app)
-        value: http://localhost:3000
+        value: https://mandate-razorpay-control-plane.vercel.app
       - key: DATABASE_URL
         fromDatabase:
           name: mandate-postgres
