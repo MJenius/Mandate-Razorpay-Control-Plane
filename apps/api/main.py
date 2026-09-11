@@ -81,7 +81,30 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 else:
                     logger.error("database_sync_failed_dev_mode", error=str(exc))
 
+    # Start an embedded background reconciliation task for environments without a dedicated worker
+    reconciliation_task = None
+    async def _embedded_reconciliation_worker() -> None:
+        from services.worker.main import reconcile_stuck_reservations
+        while True:
+            try:
+                await asyncio.sleep(60)
+                await reconcile_stuck_reservations(timeout_seconds=120)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error("embedded_reconciliation_error", error=str(e))
+
+    reconciliation_task = asyncio.create_task(_embedded_reconciliation_worker())
+
     yield
+
+    if reconciliation_task:
+        reconciliation_task.cancel()
+        try:
+            await reconciliation_task
+        except asyncio.CancelledError:
+            pass
+
     logger.info("mandate_api_stopping")
 
 
