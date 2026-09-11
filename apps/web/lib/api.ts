@@ -333,6 +333,10 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
     clearTimeout(timeoutId);
 
+    if (process.env.NODE_ENV === "development") {
+      console.debug(`[API] ${options.method || "GET"} ${endpoint} -> ${res.status}`);
+    }
+
     if (!res.ok) {
       let errorDetail = `HTTP ${res.status}: ${res.statusText}`;
       try {
@@ -362,12 +366,15 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     return (await res.json()) as T;
   } catch (err: unknown) {
     clearTimeout(timeoutId);
+    if (process.env.NODE_ENV === "development") {
+      console.warn(`[API Error] ${options.method || "GET"} ${endpoint}:`, err);
+    }
     if (err instanceof Error && err.name === "AbortError") {
       throw new Error(`Request timeout: ${endpoint} did not respond within 60s (backend may be cold-starting).`);
     }
-    if (err instanceof TypeError && err.message.includes("fetch")) {
+    if (err instanceof TypeError && (err.message.includes("fetch") || err.message.includes("Failed to fetch") || err.message.includes("NetworkError"))) {
       throw new Error(
-        `Unable to reach Mandate control plane at ${API_BASE_URL}. The free-tier cloud backend may be waking up from sleep, or CORS is not permitted. Please retry in a few seconds.`
+        `Unable to reach Mandate control plane at ${API_BASE_URL}. The cloud backend may be waking up or unreachable.`
       );
     }
     throw err;
@@ -376,7 +383,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
 export const api = {
   // Health & Liveness
-  getHealth: () => request<{ status: string; service: string }>("/health"),
+  getHealth: () => request<{ status: string; service?: string }>("/health"),
   getReadiness: () => request<HealthCheckResponse>("/ready"),
 
   // Principals & Agents

@@ -51,18 +51,47 @@ export default function DashboardLayout({
 
   const checkHealth = async () => {
     try {
-      const res = await api.getReadiness();
-      if (res && res.status === "ready") {
-        setBackendHealth("healthy");
-        setHealthDetail("PostgreSQL + Redis Operational");
-      } else if (res && res.status === "degraded") {
-        setBackendHealth("degraded");
-        setHealthDetail("Core DB Active (Redis Cache Degraded)");
-      } else {
+      // 1. Primary Liveness & Reachability check (GET /health)
+      // If HTTP 200 is returned, the backend server is reachable and active.
+      const healthRes = await api.getHealth();
+      if (!healthRes) {
         setBackendHealth("offline");
-        setHealthDetail("PostgreSQL Unreachable / Uninitialized");
+        setHealthDetail(`Control Plane Unreachable (${API_BASE_URL})`);
+        return;
       }
-    } catch {
+
+      // Backend is online. Default to healthy unless readiness check reveals degraded state.
+      let currentHealth: "healthy" | "degraded" = "healthy";
+      let detail = "Control Plane Online";
+
+      // 2. Secondary Readiness check (GET /ready) - treats dependencies separately
+      try {
+        const readyRes = await api.getReadiness();
+        if (readyRes && readyRes.status === "ready") {
+          currentHealth = "healthy";
+          detail = "PostgreSQL + Redis Operational";
+        } else if (readyRes && readyRes.status === "degraded") {
+          currentHealth = "degraded";
+          detail = readyRes.message || "Core DB Active (Redis Cache Degraded)";
+        } else if (readyRes && readyRes.status === "not_ready") {
+          currentHealth = "degraded";
+          detail = readyRes.message || "Database Initializing";
+        }
+      } catch (readyErr) {
+        // Failing readiness or dependency inspection does NOT mean the backend server is offline
+        if (process.env.NODE_ENV === "development") {
+          console.warn("[Readiness Check] Degraded or unavailable:", readyErr);
+        }
+        currentHealth = "degraded";
+        detail = "Core API Online (Dependencies Reconnecting)";
+      }
+
+      setBackendHealth(currentHealth);
+      setHealthDetail(detail);
+    } catch (err) {
+      if (process.env.NODE_ENV === "development") {
+        console.warn("[Health Check] Control plane offline:", err);
+      }
       setBackendHealth("offline");
       setHealthDetail(`Control Plane Unreachable (${API_BASE_URL})`);
     }
