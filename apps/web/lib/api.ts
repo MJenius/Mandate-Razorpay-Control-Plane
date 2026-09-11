@@ -316,12 +316,17 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 60000);
 
+  const headers: Record<string, string> = {};
+  if (options.body) {
+    headers["Content-Type"] = "application/json";
+  }
+
   try {
     const res = await fetch(url, {
       ...options,
       signal: controller.signal,
       headers: {
-        "Content-Type": "application/json",
+        ...headers,
         ...options.headers,
       },
     });
