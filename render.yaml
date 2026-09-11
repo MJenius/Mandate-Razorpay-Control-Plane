@@ -1,0 +1,103 @@
+# Render Blueprint Specification for Mandate Control Plane
+# Architecture:
+# - Web Service: FastAPI Control Plane API (Public)
+# - Background Worker: Async Reconciliation Worker (Private)
+# - Managed PostgreSQL: System of record for mandates, agents, operations, and audit logs
+# - Key Value / Redis: Distributed rate limiting & concurrency state
+
+services:
+  # 1. FastAPI Control Plane Web Service
+  - type: web
+    name: mandate-api
+    runtime: python
+    region: oregon
+    plan: free
+    buildCommand: pip install --upgrade pip && pip install .
+    startCommand: uvicorn apps.api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: demo
+      - key: DEBUG
+        value: "false"
+      - key: LOG_LEVEL
+        value: INFO
+      - key: AUTO_MIGRATE_ON_STARTUP
+        value: "true"
+      - key: AUTO_SEED_DEMO
+        value: "true"
+      - key: RAZORPAY_MOCK_MODE
+        value: "true"
+      - key: RAZORPAY_KEY_ID
+        value: rzp_test_placeholder
+      - key: RAZORPAY_KEY_SECRET
+        generateValue: true
+      - key: RAZORPAY_WEBHOOK_SECRET
+        generateValue: true
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ALLOWED_ORIGINS
+        # Update with your Vercel deployment URL (e.g. https://mandate-web.vercel.app)
+        value: http://localhost:3000
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mandate-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: mandate-redis
+          property: connectionString
+
+  # 2. Asynchronous Background Worker
+  - type: worker
+    name: mandate-worker
+    runtime: python
+    region: oregon
+    plan: free
+    buildCommand: pip install --upgrade pip && pip install .
+    startCommand: python -m services.worker.main
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: demo
+      - key: DEBUG
+        value: "false"
+      - key: LOG_LEVEL
+        value: INFO
+      - key: AUTO_MIGRATE_ON_STARTUP
+        value: "false"
+      - key: RAZORPAY_MOCK_MODE
+        value: "true"
+      - key: RAZORPAY_KEY_ID
+        value: rzp_test_placeholder
+      - key: RAZORPAY_KEY_SECRET
+        fromService:
+          type: web
+          name: mandate-api
+          envVarKey: RAZORPAY_KEY_SECRET
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mandate-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: mandate-redis
+          property: connectionString
+
+databases:
+  # 3. Managed PostgreSQL Database
+  - name: mandate-postgres
+    region: oregon
+    plan: free
+    databaseName: mandate_db
+    user: mandate_user
+
+# 4. Managed Key Value / Redis Instance
+# (Render Key Value provides a Redis-compatible TLS endpoint)
+keyvalues:
+  - name: mandate-redis
+    region: oregon
+    plan: free

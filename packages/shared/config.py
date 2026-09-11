@@ -22,6 +22,7 @@ class Settings(BaseSettings):
 
     # API
     API_PORT: int = 8000
+    PORT: int | None = Field(default=None, description="Cloud host dynamic PORT assignment")
     API_HOST: str = "0.0.0.0"
 
     # Database
@@ -63,8 +64,18 @@ class Settings(BaseSettings):
     DEFAULT_LLM_PROVIDER: str = Field(default="openai", description="Primary LLM provider")
 
     @property
+    def server_port(self) -> int:
+        """Effective listening port, prioritizing cloud provider $PORT over API_PORT."""
+        return self.PORT if self.PORT is not None else self.API_PORT
+
+    @property
     def cors_origins(self) -> list[str]:
-        return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",") if origin.strip()]
+        origins: list[str] = []
+        for raw_origin in self.ALLOWED_ORIGINS.split(","):
+            cleaned = raw_origin.strip().rstrip("/")
+            if cleaned:
+                origins.append(cleaned)
+        return origins
 
     @model_validator(mode="after")
     def validate_production_safety(self) -> "Settings":

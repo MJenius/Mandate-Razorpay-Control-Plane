@@ -3,8 +3,11 @@
  * Connects directly to FastAPI backend and reflects real control plane state.
  */
 
-export const API_BASE_URL =
+export const RAW_API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+// Ensure no trailing slash for clean endpoint concatenation
+export const API_BASE_URL = RAW_API_BASE_URL.replace(/\/+$/, "");
 
 export interface Agent {
   id: string;
@@ -355,7 +358,12 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   } catch (err: unknown) {
     clearTimeout(timeoutId);
     if (err instanceof Error && err.name === "AbortError") {
-      throw new Error(`Request timeout: ${endpoint} did not respond within 20s`);
+      throw new Error(`Request timeout: ${endpoint} did not respond within 60s (backend may be cold-starting).`);
+    }
+    if (err instanceof TypeError && err.message.includes("fetch")) {
+      throw new Error(
+        `Unable to reach Mandate control plane at ${API_BASE_URL}. The free-tier cloud backend may be waking up from sleep, or CORS is not permitted. Please retry in a few seconds.`
+      );
     }
     throw err;
   }
