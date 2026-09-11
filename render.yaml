@@ -3,7 +3,7 @@
 # - Web Service: FastAPI Control Plane API (Public)
 # - Background Worker: Async Reconciliation Worker (Private)
 # - Managed PostgreSQL: System of record for mandates, agents, operations, and audit logs
-# - Key Value / Redis: Distributed rate limiting & concurrency state
+# - Key Value (Redis/Valkey): Distributed rate limiting & concurrency state
 
 services:
   # 1. FastAPI Control Plane Web Service
@@ -87,17 +87,17 @@ services:
           name: mandate-redis
           property: connectionString
 
+  # 3. Managed Key Value (Redis/Valkey-compatible)
+  - type: keyvalue
+    name: mandate-redis
+    region: oregon
+    plan: free
+    ipAllowList: [] # internal access only
+
 databases:
-  # 3. Managed PostgreSQL Database
+  # 4. Managed PostgreSQL Database
   - name: mandate-postgres
     region: oregon
     plan: free
     databaseName: mandate_db
     user: mandate_user
-
-# 4. Managed Key Value / Redis Instance
-# (Render Key Value provides a Redis-compatible TLS endpoint)
-keyvalues:
-  - name: mandate-redis
-    region: oregon
-    plan: free
